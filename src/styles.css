@@ -606,12 +606,24 @@ h1 {
   white-space: nowrap;
 }
 
+/* same footer as https://andrewmacheret.com/projects.css, which this page doesn't load */
 .credits {
   position: fixed;
   right: 16px;
   bottom: 12px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 0.7rem;
+  opacity: 0.35;
+  transition: opacity 200ms;
+}
+
+.credits:hover,
+.credits:focus-within {
+  opacity: 0.8;
+}
+
+.credits a {
+  color: inherit;
 }
 
 @media (max-width: 720px) {

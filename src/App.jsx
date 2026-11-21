@@ -305,7 +305,7 @@ export default function App() {
       )}
 
       <footer className="credits">
-        Orbits from <a href="https://celestrak.org/">CelesTrak</a>
+        <a href="https://andrewmacheret.com/">More projects</a> · Orbits from <a href="https://celestrak.org/">CelesTrak</a>
         {catalog && `, updated ${ageLabel(catalog.generated)}`} · Earth textures from{' '}
         <a href="https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets">three.js</a> ·{' '}
         <a href="https://github.com/andrewmacheret/live-earth">Source</a>
