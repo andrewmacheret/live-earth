@@ -4,7 +4,9 @@ const GP_URL = 'https://celestrak.org/NORAD/elements/gp.php';
 
 // CelesTrak groups to download, and the legend category each one goes in. Together they cover
 // almost everything in CelesTrak's "active" list. A satellite in more than one group keeps the
-// first one listed here.
+// first one listed here, so groups that mix all kinds of satellites go last: geo (anything in
+// geosynchronous orbit), tdrss (anything that talks through NASA's relays, like Hubble) and
+// satnogs (anything volunteers track by radio).
 export const GROUPS = [
   ['stations', 'station'],
   ['starlink', 'starlink'],
@@ -21,23 +23,23 @@ export const GROUPS = [
   ['argos', 'earth'],
   ['planet', 'earth'],
   ['spire', 'earth'],
-  ['geo', 'comms'],
   ['iridium-NEXT', 'comms'],
   ['orbcomm', 'comms'],
   ['globalstar', 'comms'],
   ['qianfan', 'comms'],
   ['hulianwang', 'comms'],
-  ['amateur', 'comms'],
-  ['satnogs', 'comms'],
   ['x-comm', 'comms'],
   ['other-comm', 'comms'],
-  ['tdrss', 'comms'],
   ['science', 'science'],
   ['geodetic', 'science'],
   ['engineering', 'science'],
   ['education', 'science'],
   ['military', 'military'],
   ['radar', 'military'],
+  ['geo', 'comms'],
+  ['tdrss', 'comms'],
+  ['amateur', 'comms'],
+  ['satnogs', 'other'],
   ['cubesat', 'other'],
   ['last-30-days', 'other']
 ];

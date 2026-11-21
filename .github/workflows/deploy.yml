@@ -48,7 +48,7 @@ jobs:
         run: |
           mkdir -p build/lambda build/src/sats
           cp lambda/handler.js build/lambda/
-          cp src/sats/catalog.js src/sats/celestrak.js src/sats/refresh.js build/src/sats/
+          cp src/sats/*.js build/src/sats/
           echo '{"type":"module"}' > build/package.json
           (cd build && zip -qr ../lambda.zip .)
       - uses: aws-actions/configure-aws-credentials@v6

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Globe } from './globe/Globe.js';
+import { articleFor, fetchSummary, trackerLinks } from './sats/about.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
@@ -43,7 +44,13 @@ export default function App() {
         });
         const indexById = new Map(records.map((record, i) => [record.NORAD_CAT_ID, i]));
         const recent = (data.recent ?? []).map(id => indexById.get(id)).filter(i => i != null);
-        setCatalog({ records, counts, launches, recent, generated: data.generated });
+        const wiki = data.wiki ?? {};
+        // grouped by category, so "Surprise me" isn't mostly TV satellites
+        const withArticles = {};
+        records.forEach((record, i) => {
+          if (wiki[record.NORAD_CAT_ID]) (withArticles[categories[i]] ??= []).push(i);
+        });
+        setCatalog({ records, counts, launches, recent, wiki, withArticles, generated: data.generated });
         const wanted = Number(new URLSearchParams(location.search).get('sat'));
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
         if (start < 0) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
@@ -67,6 +74,34 @@ export default function App() {
     };
   }, []);
 
+  const selectedRecord = info ? catalog?.records[info.index] : null;
+  const article = useMemo(() => selectedRecord && articleFor(selectedRecord, catalog.wiki), [selectedRecord, catalog]);
+  // undefined while loading, null when Wikipedia has nothing
+  const [summary, setSummary] = useState(null);
+  useEffect(() => {
+    setSummary(article ? undefined : null);
+    if (!article) return;
+    let current = true;
+    fetchSummary(article.title).then(result => current && setSummary(result));
+    return () => {
+      current = false;
+    };
+  }, [article]);
+
+  const pickAndFace = index => {
+    globeRef.current.select(index);
+    globeRef.current.faceSelected();
+  };
+
+  const randomItem = list => list[Math.floor(Math.random() * list.length)];
+  const surprise = () => {
+    const groups = Object.values(catalog.withArticles);
+    for (let tries = 0; tries < 5; tries++) {
+      const index = randomItem(randomItem(groups));
+      if (index !== info?.index) return pickAndFace(index);
+    }
+  };
+
   // put the selected satellite in the address bar so links open on it (the ISS is the default)
   const selectedId = info?.noradId;
   useEffect(() => {
@@ -88,13 +123,19 @@ export default function App() {
     setSpeed(1);
   };
 
+  const applyHidden = next => {
+    setHidden(next);
+    globeRef.current.setHidden(next);
+  };
+
   const toggleCategory = id => {
     const next = new Set(hidden);
     if (next.has(id)) next.delete(id);
     else next.add(id);
-    setHidden(next);
-    globeRef.current.setHidden(next);
+    applyHidden(next);
   };
+
+  const toggleAll = () => applyHidden(hidden.size ? new Set() : new Set(CATEGORIES.map(c => c.id)));
 
   const toggleFocus = next => {
     const value = next && focus?.key !== next.key ? next : null;
@@ -127,18 +168,23 @@ export default function App() {
             : error || 'Loading satellites…'}
         </p>
         {catalog && (
-          <Search
-            records={catalog.records}
-            onPick={index => {
-              globeRef.current.select(index);
-              globeRef.current.faceSelected();
-            }}
-          />
+          <div className="search-row">
+            <Search records={catalog.records} onPick={pickAndFace} />
+            {Object.keys(catalog.withArticles).length > 0 && (
+              <button className="surprise" onClick={surprise} title="Jump to a random satellite that has a Wikipedia article">
+                Surprise me
+              </button>
+            )}
+          </div>
         )}
       </header>
 
       {catalog && (
         <section className="panel bottom-left legend">
+          <div className="legend-head">
+            <span>Categories</span>
+            <button onClick={toggleAll}>{hidden.size ? 'Show all' : 'Hide all'}</button>
+          </div>
           {CATEGORIES.filter(c => catalog.counts[c.id]).map(c => (
             <button
               key={c.id}
@@ -211,6 +257,8 @@ export default function App() {
       {info && (
         <InfoPanel
           info={info}
+          article={article}
+          summary={summary}
           launchSize={catalog?.launches.get(selectedLaunch)?.length ?? 0}
           showingLaunch={focus?.key === `launch ${selectedLaunch}`}
           onShowLaunch={showLaunch}
@@ -283,7 +331,7 @@ function Search({ records, onPick }) {
   );
 }
 
-function InfoPanel({ info, launchSize, showingLaunch, onShowLaunch, onFollow, onClose }) {
+function InfoPanel({ info, article, summary, launchSize, showingLaunch, onShowLaunch, onFollow, onClose }) {
   const category = CATEGORY_BY_ID[info.category];
   return (
     <aside className="panel top-right info">
@@ -328,7 +376,36 @@ function InfoPanel({ info, launchSize, showingLaunch, onShowLaunch, onFollow, on
           </button>
         )}
       </div>
+      <About article={article} summary={summary} noradId={info.noradId} />
     </aside>
+  );
+}
+
+function About({ article, summary, noradId }) {
+  return (
+    <section className="about">
+      {summary === undefined && <p className="muted">Looking it up on Wikipedia…</p>}
+      {summary && (
+        <>
+          {article.program && <div className="about-kind">Part of {summary.title}</div>}
+          <div className="about-body">
+            {summary.image && <img src={summary.image} alt="" />}
+            <div>
+              {summary.description && <p className="about-description">{summary.description}</p>}
+              <p className="about-extract">{summary.extract}</p>
+            </div>
+          </div>
+        </>
+      )}
+      <p className="about-links">
+        {summary?.url && <a href={summary.url} target="_blank" rel="noreferrer">Wikipedia</a>}
+        {trackerLinks(noradId).map(link => (
+          <a key={link.label} href={link.href} target="_blank" rel="noreferrer">
+            {link.label}
+          </a>
+        ))}
+      </p>
+    </section>
   );
 }
 

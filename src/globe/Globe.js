@@ -220,13 +220,19 @@ export class Globe {
     const result = propagate(this.satrec, new Date(this.simNow()));
     if (!result?.position) return;
     const { x, y, z } = result.position;
-    const to = new THREE.Vector3(...toScene(x, y, z, [0, 0, 0])).normalize();
+    const to = new THREE.Vector3(...toScene(x, y, z, [0, 0, 0]));
+    // satellites far out, like the ones 36,000 km up, would end up behind the camera, so back away
+    const satDistance = to.length() / EARTH_RADIUS_KM;
+    to.normalize();
     const from = this.camera.position.clone().normalize();
-    const distance = this.camera.position.length();
+    const startDistance = this.camera.position.length();
+    const endDistance =
+      satDistance * 1.15 > startDistance ? Math.min(this.controls.maxDistance, satDistance * 1.6) : startDistance;
     const turn = new THREE.Quaternion().setFromUnitVectors(from, to);
     const partial = new THREE.Quaternion();
     const place = k => {
       partial.identity().slerp(turn, k);
+      const distance = startDistance + (endDistance - startDistance) * k;
       this.camera.position.copy(from).applyQuaternion(partial).multiplyScalar(distance);
     };
     if (animate) this.fly(place);

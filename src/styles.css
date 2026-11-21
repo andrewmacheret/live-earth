@@ -81,9 +81,30 @@ h1 {
   font-size: 14px;
 }
 
+.search-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
 .search {
   position: relative;
-  margin-top: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.surprise {
+  flex: none;
+  padding: 9px 11px;
+  font-size: 13px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.surprise:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .search input {
@@ -160,6 +181,27 @@ h1 {
 
 .legend button.off {
   opacity: 0.4;
+}
+
+.legend .legend-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 4px 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.legend .legend-head button {
+  padding: 3px 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .swatch {
@@ -376,6 +418,65 @@ h1 {
   color: var(--muted);
 }
 
+/* leave room for the clock panel below it */
+.info {
+  max-height: calc(100vh - 220px);
+  overflow-y: auto;
+}
+
+.about {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.about p {
+  margin: 0;
+}
+
+.about-kind {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.about-body {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.about-body img {
+  flex: none;
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.about .about-description {
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.about-extract {
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.45;
+  color: #c9d4e5;
+}
+
+.about .about-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 10px;
+}
+
 .close {
   position: absolute;
   top: 8px;
@@ -506,6 +607,14 @@ h1 {
 
   .info dl {
     margin-bottom: 10px;
+  }
+
+  .info {
+    max-height: calc(100dvh - 290px);
+  }
+
+  .about-extract {
+    -webkit-line-clamp: 3;
   }
 
   .focus-bar {

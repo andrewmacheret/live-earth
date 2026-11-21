@@ -91,6 +91,27 @@ test('the Lambda saves the merged catalog', async () => {
   assert.equal(JSON.parse(saved).count, result.satellites);
 });
 
+test('the Lambda adds Wikipedia links, and keeps the old ones if Wikidata fails', async () => {
+  let saved;
+  const save = async body => (saved = JSON.parse(body));
+  const options = { download: fakeCelesTrak, save, log: quiet };
+  await createHandler({
+    ...options,
+    downloadWiki: async () => ({ 100000: 'Starlink', 5: 'Vanguard 1' }),
+    loadPrevious: async () => null
+  })();
+  assert.deepEqual(saved.wiki, { 100000: 'Starlink' });
+  const previous = saved;
+  await createHandler({
+    ...options,
+    downloadWiki: async () => {
+      throw new Error('Wikidata answered 503');
+    },
+    loadPrevious: async () => previous
+  })();
+  assert.deepEqual(saved.wiki, { 100000: 'Starlink' });
+});
+
 test('the Lambda keeps the old file when every group fails', async () => {
   let saved = false;
   const handler = createHandler({
