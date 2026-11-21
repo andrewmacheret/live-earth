@@ -1,15 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Globe } from './globe/Globe.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
+import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
-const SPEEDS = [
-  { value: 0, label: 'Pause' },
-  { value: 1, label: 'Live' },
-  { value: 60, label: '1 min/s' },
-  { value: 600, label: '10 min/s' },
-  { value: 3600, label: '1 hr/s' }
-];
 const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 const number = new Intl.NumberFormat();
 
@@ -170,17 +164,41 @@ export default function App() {
 
       <section className="panel bottom-right clock">
         <div className="time">
-          <span className={live ? 'badge live' : 'badge'}>{live ? 'LIVE' : offsetLabel(simTime - Date.now())}</span>
-          {formatTime(simTime)}
-        </div>
-        <div className="speeds">
-          {SPEEDS.map(s => (
-            <button key={s.value} className={speed === s.value ? 'on' : ''} onClick={() => changeSpeed(s.value)}>
-              {s.label}
+          {live ? (
+            <span className="badge live">LIVE</span>
+          ) : (
+            <button className="badge" onClick={goLive}>
+              Back to live
             </button>
-          ))}
-          {!live && <button onClick={goLive}>Back to now</button>}
+          )}
+          <span className="now">{formatTime(simTime)}</span>
+          <span className="offset">{live ? '' : offsetLabel(simTime - Date.now())}</span>
         </div>
+        <div className="dial">
+          <input
+            type="range"
+            min={-SLIDER_MAX}
+            max={SLIDER_MAX}
+            step={1}
+            value={speedToSlider(speed)}
+            onChange={event => changeSpeed(sliderToSpeed(Number(event.target.value)))}
+            aria-label="Playback speed"
+            aria-valuetext={speedLabel(speed)}
+          />
+          <div className="notches">
+            {NOTCHES.map(notch => (
+              <button
+                key={notch.value}
+                style={{ '--at': (notch.value + SLIDER_MAX) / (2 * SLIDER_MAX) }}
+                className={speedToSlider(speed) === notch.value ? 'on' : ''}
+                onClick={() => changeSpeed(sliderToSpeed(notch.value))}
+              >
+                {notch.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        <p className="speed-label">{speedLabel(speed)}</p>
       </section>
 
       {focus && (
@@ -333,6 +351,7 @@ function formatTime(ms) {
 
 function offsetLabel(ms) {
   const sign = ms < 0 ? '−' : '+';
+  if (Math.abs(ms) < 60000) return `${sign}${Math.round(Math.abs(ms) / 1000)} s`;
   const minutes = Math.round(Math.abs(ms) / 60000);
   if (minutes < 60) return `${sign}${minutes} min`;
   const hours = minutes / 60;

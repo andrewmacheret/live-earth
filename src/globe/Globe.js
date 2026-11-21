@@ -114,9 +114,11 @@ export class Globe {
   }
 
   setClock({ simStart, speed }) {
-    this.clock = { realStart: Date.now(), simStart, speed, version: this.clock.version + 1 };
+    // only a jump in time makes the worker's last answer useless, a new speed doesn't
+    const jumped = Math.abs(simStart - this.simNow()) > 1000;
+    this.clock = { realStart: Date.now(), simStart, speed, version: this.clock.version + (jumped ? 1 : 0) };
     this.worker?.postMessage({ type: 'clock', clock: this.clock });
-    this.orbitTime = null;
+    if (jumped) this.orbitTime = null;
   }
 
   setData(records, categories) {
