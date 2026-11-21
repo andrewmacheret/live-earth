@@ -42,9 +42,11 @@ export default function App() {
         const counts = {};
         for (const category of categories) counts[category] = (counts[category] || 0) + 1;
         setCatalog({ records, counts, generated: data.generated });
-        const iss = records.findIndex(r => r.NORAD_CAT_ID === ISS);
-        if (iss >= 0) {
-          globe.select(iss);
+        const wanted = Number(new URLSearchParams(location.search).get('sat'));
+        let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
+        if (start < 0) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
+        if (start >= 0) {
+          globe.select(start);
           globe.faceSelected(false);
         }
       })
@@ -62,6 +64,16 @@ export default function App() {
       globe.dispose();
     };
   }, []);
+
+  // put the selected satellite in the address bar so links open on it (the ISS is the default)
+  const selectedId = info?.noradId;
+  useEffect(() => {
+    if (!catalog) return;
+    const url = new URL(location.href);
+    if (selectedId && selectedId !== ISS) url.searchParams.set('sat', selectedId);
+    else url.searchParams.delete('sat');
+    if (url.href !== location.href) history.replaceState(null, '', url);
+  }, [selectedId, catalog]);
 
   const changeSpeed = value => {
     const globe = globeRef.current;
