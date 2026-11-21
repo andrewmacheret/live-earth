@@ -1,0 +1,95 @@
+name: Build and deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FUNCTION_NAME: LiveEarth
+  RUNTIME: nodejs24.x
+  S3_PATH: s3://andrewmacheret.com/projects/live-earth
+  SITE_URL: https://andrewmacheret.com/projects/live-earth
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+  deploy:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # The Lambda imports ../src/sats, so keep the folder layout. The SDK comes with the runtime.
+      - name: Package Lambda
+        run: |
+          mkdir -p build/lambda build/src/sats
+          cp lambda/handler.js build/lambda/
+          cp src/sats/catalog.js src/sats/celestrak.js src/sats/refresh.js build/src/sats/
+          echo '{"type":"module"}' > build/package.json
+          (cd build && zip -qr ../lambda.zip .)
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Update Lambda settings
+        run: |
+          aws lambda update-function-configuration --function-name "$FUNCTION_NAME" \
+            --runtime "$RUNTIME" --handler lambda/handler.handler --timeout 600 --memory-size 256 \
+            --environment "Variables={BUCKET=andrewmacheret.com,KEY=projects/live-earth/data/satellites.json}" \
+            --output text --query LastUpdateStatus
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+      - name: Update Lambda code
+        run: |
+          aws lambda update-function-code --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://lambda.zip \
+            --output text --query LastUpdateStatus
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+      # data/ is written by the Lambda, so this sync leaves it alone.
+      # Files in assets/ have a content hash in their name, so they can be cached forever.
+      - name: Upload website
+        run: |
+          aws s3 sync dist "$S3_PATH" --delete --exclude index.html --exclude 'data/*' \
+            --cache-control 'public, max-age=31536000, immutable'
+          aws s3 cp dist/index.html "$S3_PATH/index.html" --cache-control 'no-cache'
+      - name: Invalidate CloudFront cache
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --paths '/projects/live-earth/index.html' '/projects/live-earth/'
+      # The schedule refreshes the data every 2 hours. Only fill it in here if it's missing.
+      - name: Make sure satellite data exists
+        run: |
+          if ! curl -sf -o /dev/null "$SITE_URL/data/satellites.json"; then
+            aws lambda invoke --function-name "$FUNCTION_NAME" --cli-read-timeout 660 refresh.json \
+              --query FunctionError --output text | tee function-error.txt
+            cat refresh.json
+            grep -qx None function-error.txt
+          fi
+      - name: Smoke test
+        run: |
+          curl -sSf "$SITE_URL/" | grep -q '<title>Live Earth</title>'
+          curl -sSf "$SITE_URL/data/satellites.json" | jq -e '.satellites | length > 1000'

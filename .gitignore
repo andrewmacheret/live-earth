@@ -1,0 +1,19 @@
+.DS_Store
+*.log
+
+# NPM packages folder.
+node_modules/
+
+# Vite output folder.
+dist/
+
+# Made by `npm run fetch-data`.
+public/data/
+
+.env
+.env.*
+*.env
+
+# Lambda package made in CI.
+build/
+lambda.zip
