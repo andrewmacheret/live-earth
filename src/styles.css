@@ -644,47 +644,41 @@ h1 {
   color: #e6edf7;
 }
 
-/* same breadcrumb as projects.css */
-.breadcrumb ol {
+/* same logo in front of the title as projects.css */
+.title-row {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0 0 8px;
-  padding: 0;
-  list-style: none;
-  font: 0.75rem/1.25rem ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 22px;
+}
+
+.title-row h1 {
+  line-height: 1.2;
+}
+
+.title-row .home {
+  display: flex;
+  flex: none;
+  margin-top: 0.1em;
+  border-radius: 4px;
+  transition: transform 0.15s;
+}
+
+.title-row .home:hover {
+  transform: translateY(-1px);
+}
+
+.title-row .home img {
+  display: block;
+  width: 1em;
+  height: 1em;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.title-row .slash {
   color: var(--muted);
-}
-
-.breadcrumb li + li::before {
-  content: '/';
-  margin-right: 0.4rem;
-  opacity: 0.6;
-}
-
-.breadcrumb a {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--muted);
-  text-decoration: none;
-}
-
-.breadcrumb a:hover {
-  color: #e6edf7;
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-
-.breadcrumb img {
-  width: 14px;
-  height: 14px;
-  border-radius: 3px;
-}
-
-.breadcrumb [aria-current] {
-  color: var(--accent);
+  line-height: 1.2;
 }
 
 @media (max-width: 720px) {

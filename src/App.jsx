@@ -237,18 +237,13 @@ export default function App() {
       <div className="globe" ref={containerRef} />
 
       <header className="panel top-left">
-        <nav className="breadcrumb" aria-label="Breadcrumb">
-          <ol>
-            <li>
-              <a href="https://andrewmacheret.com/">
-                <img src="https://andrewmacheret.com/favicon.svg" alt="" width="14" height="14" />
-                andrewmacheret.com
-              </a>
-            </li>
-            <li aria-current="page">Live Earth</li>
-          </ol>
-        </nav>
-        <h1>Live Earth</h1>
+        <div className="title-row">
+          <a className="home" href="https://andrewmacheret.com/">
+            <img src="https://andrewmacheret.com/favicon.svg" alt="andrewmacheret.com" width="20" height="20" />
+          </a>
+          <span className="slash" aria-hidden="true">/</span>
+          <h1>Live Earth</h1>
+        </div>
         <p className="subtitle">
           {catalog
             ? `${number.format(catalog.records.length)} satellites${
