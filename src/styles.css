@@ -611,19 +611,18 @@ h1 {
   position: fixed;
   right: 16px;
   bottom: 12px;
-  color: var(--muted);
+  color: color-mix(in srgb, var(--muted) 35%, transparent);
   font-size: 0.7rem;
-  opacity: 0.35;
-  transition: opacity 200ms;
-}
-
-.credits:hover,
-.credits:focus-within {
-  opacity: 0.8;
 }
 
 .credits a {
   color: inherit;
+  transition: color 200ms;
+}
+
+.credits a:hover,
+.credits a:focus-visible {
+  color: #e6edf7;
 }
 
 @media (max-width: 720px) {
