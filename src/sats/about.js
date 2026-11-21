@@ -1,5 +1,11 @@
 // Where to learn more about a satellite: its own Wikipedia article if Wikidata links one,
 // otherwise the article for the constellation or program it belongs to.
+// station modules link to the module's own article, but people clicking the ISS want the station
+const STATIONS = [
+  [/^ISS \(/, 'International Space Station'],
+  [/^CSS \(/, 'Tiangong space station']
+];
+
 const PROGRAMS = [
   [/^STARLINK/, 'Starlink'],
   [/^ONEWEB/, 'OneWeb'],
@@ -19,6 +25,8 @@ const PROGRAMS = [
 ];
 
 export function articleFor(record, wiki = {}) {
+  const station = STATIONS.find(([pattern]) => pattern.test(record.OBJECT_NAME));
+  if (station) return { title: station[1], program: true };
   const own = wiki[record.NORAD_CAT_ID];
   if (own) return { title: own, program: false };
   const match = PROGRAMS.find(([pattern]) => pattern.test(record.OBJECT_NAME));

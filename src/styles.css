@@ -51,6 +51,8 @@ a {
   top: 16px;
   left: 16px;
   width: min(360px, calc(100vw - 32px));
+  /* so the search results cover the clock on phones */
+  z-index: 2;
 }
 
 .top-right {
@@ -147,6 +149,50 @@ h1 {
 .search li button:hover,
 .search li button:focus-visible {
   background: rgba(124, 196, 255, 0.14);
+}
+
+.search .list-title {
+  padding: 6px 9px 4px;
+  color: #ffd166;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.search .also {
+  color: var(--muted);
+}
+
+.favorite {
+  position: absolute;
+  top: 8px;
+  right: 42px;
+  width: 30px;
+  height: 30px;
+  font-size: 19px;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  border-radius: 50%;
+}
+
+.favorite:hover {
+  color: #ffd166;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.favorite.on {
+  color: #ffd166;
+}
+
+.legend .star {
+  width: 10px;
+  color: #ffd166;
+  font-size: 12px;
+  line-height: 10px;
+  text-align: center;
 }
 
 .count {
@@ -386,7 +432,7 @@ h1 {
 }
 
 .info h2 {
-  margin: 4px 30px 2px 0;
+  margin: 4px 64px 2px 0;
   font-size: 20px;
   word-break: break-word;
 }

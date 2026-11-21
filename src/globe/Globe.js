@@ -45,6 +45,22 @@ const markerFragment = /* glsl */ `
 
 const ease = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
 
+// Fill a line with one full orbit, starting at the given time.
+function drawOrbitLine(line, satrec, now) {
+  const periodMs = ((2 * Math.PI) / satrec.no) * 60000;
+  const array = line.geometry.attributes.position.array;
+  for (let k = 0; k <= ORBIT_POINTS; k++) {
+    const result = propagate(satrec, new Date(now + (k / ORBIT_POINTS) * periodMs));
+    if (!result?.position) {
+      if (k > 0) array.copyWithin(k * 3, (k - 1) * 3, k * 3);
+      continue;
+    }
+    const { x, y, z } = result.position;
+    toScene(x / EARTH_RADIUS_KM, y / EARTH_RADIUS_KM, z / EARTH_RADIUS_KM, array, k * 3);
+  }
+  line.geometry.attributes.position.needsUpdate = true;
+}
+
 export class Globe {
   constructor(container, { onHover, onSelect, onInfo }) {
     this.container = container;
@@ -99,7 +115,10 @@ export class Globe {
     );
     this.orbit.frustumCulled = false;
     this.orbit.visible = false;
-    this.scene.add(this.marker, this.orbit);
+    // orbit lines for a group of satellites, like your favorites
+    this.orbitGroup = new THREE.Group();
+    this.groupOrbits = [];
+    this.scene.add(this.marker, this.orbit, this.orbitGroup);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -118,7 +137,32 @@ export class Globe {
     const jumped = Math.abs(simStart - this.simNow()) > 1000;
     this.clock = { realStart: Date.now(), simStart, speed, version: this.clock.version + (jumped ? 1 : 0) };
     this.worker?.postMessage({ type: 'clock', clock: this.clock });
-    if (jumped) this.orbitTime = null;
+    if (jumped) this.orbitTime = this.groupOrbitsTime = null;
+  }
+
+  // Draw the orbits of these satellites (up to 40). Pass null to remove them.
+  setGroupOrbits(indices) {
+    for (const { line } of this.groupOrbits) {
+      line.geometry.dispose();
+      line.material.dispose();
+    }
+    this.orbitGroup.clear();
+    this.groupOrbits = (indices ?? []).slice(0, 40).map(index => {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array((ORBIT_POINTS + 1) * 3), 3));
+      const material = new THREE.LineBasicMaterial({
+        color: COLORS[this.categories[index]],
+        transparent: true,
+        opacity: 0.45,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const line = new THREE.Line(geometry, material);
+      line.frustumCulled = false;
+      this.orbitGroup.add(line);
+      return { line, satrec: json2satrec(this.records[index]) };
+    });
+    this.groupOrbitsTime = null;
   }
 
   setData(records, categories) {
@@ -313,6 +357,13 @@ export class Globe {
     }
     this.followFrom = sat;
     if (sat) this.updateSelection(now, date, sat);
+    // orbits drift slowly, so redrawing every simulated hour is plenty
+    if (this.groupOrbits.length && (this.groupOrbitsTime == null || Math.abs(now - this.groupOrbitsTime) > 3600000)) {
+      this.groupOrbitsTime = now;
+      for (const { line, satrec } of this.groupOrbits) {
+        drawOrbitLine(line, satrec, now);
+      }
+    }
 
     if (this.pointer && this.pointerMoved) {
       this.pointerMoved = false;
@@ -331,27 +382,15 @@ export class Globe {
     this.marker.geometry.attributes.position.needsUpdate = true;
 
     const periodMs = ((2 * Math.PI) / this.satrec.no) * 60000;
-    if (this.orbitTime == null || Math.abs(now - this.orbitTime) > periodMs / 40) this.drawOrbit(now, periodMs);
+    if (this.orbitTime == null || Math.abs(now - this.orbitTime) > periodMs / 40) {
+      this.orbitTime = now;
+      drawOrbitLine(this.orbit, this.satrec, now);
+    }
 
     if (performance.now() - this.lastInfoAt > 200) {
       this.lastInfoAt = performance.now();
       this.callbacks.onInfo?.(this.info(date));
     }
-  }
-
-  drawOrbit(now, periodMs) {
-    this.orbitTime = now;
-    const array = this.orbit.geometry.attributes.position.array;
-    for (let k = 0; k <= ORBIT_POINTS; k++) {
-      const result = propagate(this.satrec, new Date(now + (k / ORBIT_POINTS) * periodMs));
-      if (!result?.position) {
-        if (k > 0) array.copyWithin(k * 3, (k - 1) * 3, k * 3);
-        continue;
-      }
-      const { x, y, z } = result.position;
-      toScene(x / EARTH_RADIUS_KM, y / EARTH_RADIUS_KM, z / EARTH_RADIUS_KM, array, k * 3);
-    }
-    this.orbit.geometry.attributes.position.needsUpdate = true;
   }
 
   info(date) {

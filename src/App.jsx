@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Globe } from './globe/Globe.js';
 import { articleFor, fetchSummary, trackerLinks } from './sats/about.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
+import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
@@ -19,6 +20,8 @@ export default function App() {
   const [simTime, setSimTime] = useState(Date.now());
   const [hidden, setHidden] = useState(() => new Set());
   const [focus, setFocus] = useState(null);
+  const [favorites, setFavorites] = useState(loadFavorites);
+  useEffect(() => saveFavorites(favorites), [favorites]);
 
   useEffect(() => {
     const globe = new Globe(containerRef.current, { onHover: setHover, onInfo: setInfo });
@@ -50,7 +53,7 @@ export default function App() {
         records.forEach((record, i) => {
           if (wiki[record.NORAD_CAT_ID]) (withArticles[categories[i]] ??= []).push(i);
         });
-        setCatalog({ records, counts, launches, recent, wiki, withArticles, generated: data.generated });
+        setCatalog({ records, counts, launches, recent, wiki, withArticles, indexById, generated: data.generated });
         const wanted = Number(new URLSearchParams(location.search).get('sat'));
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
         if (start < 0) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
@@ -137,11 +140,27 @@ export default function App() {
 
   const toggleAll = () => applyHidden(hidden.size ? new Set() : new Set(CATEGORIES.map(c => c.id)));
 
-  const toggleFocus = next => {
-    const value = next && focus?.key !== next.key ? next : null;
+  const applyFocus = value => {
     setFocus(value);
     globeRef.current.setFocus(value?.indices ?? null);
+    globeRef.current.setGroupOrbits(value?.key === 'favorites' ? value.indices : null);
   };
+
+  const toggleFocus = next => applyFocus(next && focus?.key !== next.key ? next : null);
+
+  // favorites saved earlier may include satellites that aren't in today's data
+  const favoriteIndices = useMemo(
+    () => (catalog ? favorites.map(id => catalog.indexById.get(id)).filter(i => i != null) : []),
+    [favorites, catalog]
+  );
+  const favoritesFocus = indices => ({ key: 'favorites', label: 'from your favorites', indices });
+  const showFavorites = () => toggleFocus(favoritesFocus(favoriteIndices));
+
+  // keep the highlight in step when you star or unstar while looking at favorites
+  useEffect(() => {
+    if (focus?.key !== 'favorites') return;
+    applyFocus(favoriteIndices.length ? favoritesFocus(favoriteIndices) : null);
+  }, [favoriteIndices]);
 
   const showRecent = () =>
     toggleFocus({ key: 'recent', label: 'launched in the last 30 days', indices: catalog.recent });
@@ -169,7 +188,7 @@ export default function App() {
         </p>
         {catalog && (
           <div className="search-row">
-            <Search records={catalog.records} onPick={pickAndFace} />
+            <Search records={catalog.records} wiki={catalog.wiki} favorites={favoriteIndices} onPick={pickAndFace} />
             {Object.keys(catalog.withArticles).length > 0 && (
               <button className="surprise" onClick={surprise} title="Jump to a random satellite that has a Wikipedia article">
                 Surprise me
@@ -197,6 +216,13 @@ export default function App() {
               <span className="count">{number.format(catalog.counts[c.id])}</span>
             </button>
           ))}
+          {favoriteIndices.length > 0 && (
+            <button className="recent" onClick={showFavorites} aria-pressed={focus?.key === 'favorites'}>
+              <span className="star">★</span>
+              Favorites
+              <span className="count">{number.format(favoriteIndices.length)}</span>
+            </button>
+          )}
           {catalog.recent.length > 0 && (
             <button className="recent" onClick={showRecent} aria-pressed={focus?.key === 'recent'}>
               <span className="swatch" />
@@ -259,6 +285,8 @@ export default function App() {
           info={info}
           article={article}
           summary={summary}
+          favorite={favorites.includes(info.noradId)}
+          onFavorite={() => setFavorites(ids => toggleFavorite(ids, info.noradId))}
           launchSize={catalog?.launches.get(selectedLaunch)?.length ?? 0}
           showingLaunch={focus?.key === `launch ${selectedLaunch}`}
           onShowLaunch={showLaunch}
@@ -283,44 +311,71 @@ export default function App() {
   );
 }
 
-function Search({ records, onPick }) {
+function Search({ records, wiki, favorites, onPick }) {
   const [query, setQuery] = useState('');
+  const [open, setOpen] = useState(false);
+  const inputRef = useRef(null);
   const matches = useMemo(() => {
     const q = query.trim().toUpperCase();
     if (q.length < 2) return [];
     const out = [];
-    for (let i = 0; i < records.length && out.length < 8; i++) {
-      if (records[i].OBJECT_NAME.includes(q) || String(records[i].NORAD_CAT_ID) === q) out.push(i);
+    for (let i = 0; i < records.length && out.length < 50; i++) {
+      const { OBJECT_NAME: name, NORAD_CAT_ID: id } = records[i];
+      // the Wikipedia title helps when the catalog name is short, like HST for Hubble
+      const title = wiki[id]?.toUpperCase() ?? '';
+      if (name.includes(q) || title.includes(q) || String(id) === q) {
+        const starts = name.startsWith(q) || title.startsWith(q) || String(id) === q;
+        out.push([starts ? 0 : 1, i]);
+      }
     }
-    return out;
-  }, [query, records]);
+    // names that start with what you typed go first
+    return out
+      .sort((a, b) => a[0] - b[0])
+      .slice(0, 8)
+      .map(([, i]) => i);
+  }, [query, records, wiki]);
+
+  // with nothing typed, show your favorites instead
+  const showingFavorites = !query.trim() && favorites.length > 0;
+  const list = showingFavorites ? favorites : matches;
+
+  const pick = index => {
+    onPick(index);
+    setQuery('');
+    inputRef.current.blur();
+  };
 
   return (
     <div className="search">
       <input
+        ref={inputRef}
         type="search"
         value={query}
         placeholder="Find a satellite: ISS, Hubble, STARLINK-1008…"
-        onChange={event => setQuery(event.target.value)}
+        onChange={event => {
+          setQuery(event.target.value);
+          setOpen(true);
+        }}
+        onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
+        onBlur={() => setOpen(false)}
         onKeyDown={event => {
-          if (event.key === 'Enter' && matches.length) {
-            onPick(matches[0]);
-            setQuery('');
-          }
+          if (event.key === 'Enter' && list.length) pick(list[0]);
+          if (event.key === 'Escape') inputRef.current.blur();
         }}
         aria-label="Find a satellite"
       />
-      {matches.length > 0 && (
-        <ul>
-          {matches.map(i => (
+      {open && list.length > 0 && (
+        // keep the input focused while clicking, so the list doesn't close first
+        <ul onMouseDown={event => event.preventDefault()}>
+          {showingFavorites && <li className="list-title">★ Favorites</li>}
+          {list.map(i => (
             <li key={i}>
-              <button
-                onClick={() => {
-                  onPick(i);
-                  setQuery('');
-                }}
-              >
-                {records[i].OBJECT_NAME}
+              <button onClick={() => pick(i)}>
+                <span>
+                  {records[i].OBJECT_NAME}
+                  {otherName(records[i], wiki) && <span className="also"> {otherName(records[i], wiki)}</span>}
+                </span>
                 <span className="count">{records[i].NORAD_CAT_ID}</span>
               </button>
             </li>
@@ -331,10 +386,28 @@ function Search({ records, onPick }) {
   );
 }
 
-function InfoPanel({ info, article, summary, launchSize, showingLaunch, onShowLaunch, onFollow, onClose }) {
+// the Wikipedia title, when it says more than the catalog name
+function otherName(record, wiki) {
+  const title = wiki[record.NORAD_CAT_ID];
+  const plain = text => text.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return title && plain(title) !== plain(record.OBJECT_NAME) ? title : null;
+}
+
+function InfoPanel(props) {
+  const { info, article, summary, favorite, onFavorite, launchSize, showingLaunch, onShowLaunch, onFollow, onClose } =
+    props;
   const category = CATEGORY_BY_ID[info.category];
   return (
     <aside className="panel top-right info">
+      <button
+        className={favorite ? 'favorite on' : 'favorite'}
+        onClick={onFavorite}
+        aria-pressed={favorite}
+        aria-label="Favorite"
+        title={favorite ? 'Remove from favorites' : 'Add to favorites'}
+      >
+        {favorite ? '★' : '☆'}
+      </button>
       <button className="close" onClick={onClose} aria-label="Close">
         ×
       </button>
