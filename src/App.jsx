@@ -23,6 +23,7 @@ export default function App() {
   const [speed, setSpeed] = useState(1);
   const [simTime, setSimTime] = useState(Date.now());
   const [hidden, setHidden] = useState(() => new Set());
+  const [focus, setFocus] = useState(null);
 
   useEffect(() => {
     const globe = new Globe(containerRef.current, { onHover: setHover, onInfo: setInfo });
@@ -41,7 +42,14 @@ export default function App() {
         globe.setData(records, categories);
         const counts = {};
         for (const category of categories) counts[category] = (counts[category] || 0) + 1;
-        setCatalog({ records, counts, generated: data.generated });
+        const launches = new Map();
+        records.forEach((record, i) => {
+          const key = launchOf(record);
+          if (key) launches.set(key, [...(launches.get(key) ?? []), i]);
+        });
+        const indexById = new Map(records.map((record, i) => [record.NORAD_CAT_ID, i]));
+        const recent = (data.recent ?? []).map(id => indexById.get(id)).filter(i => i != null);
+        setCatalog({ records, counts, launches, recent, generated: data.generated });
         const wanted = Number(new URLSearchParams(location.search).get('sat'));
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
         if (start < 0) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
@@ -94,6 +102,23 @@ export default function App() {
     globeRef.current.setHidden(next);
   };
 
+  const toggleFocus = next => {
+    const value = next && focus?.key !== next.key ? next : null;
+    setFocus(value);
+    globeRef.current.setFocus(value?.indices ?? null);
+  };
+
+  const showRecent = () =>
+    toggleFocus({ key: 'recent', label: 'launched in the last 30 days', indices: catalog.recent });
+
+  const selectedLaunch = info && launchOf(catalog?.records[info.index]);
+  const showLaunch = () =>
+    toggleFocus({
+      key: `launch ${selectedLaunch}`,
+      label: `from launch ${selectedLaunch}`,
+      indices: catalog.launches.get(selectedLaunch)
+    });
+
   const live = speed === 1 && Math.abs(simTime - Date.now()) < 3000;
 
   return (
@@ -132,6 +157,13 @@ export default function App() {
               <span className="count">{number.format(catalog.counts[c.id])}</span>
             </button>
           ))}
+          {catalog.recent.length > 0 && (
+            <button className="recent" onClick={showRecent} aria-pressed={focus?.key === 'recent'}>
+              <span className="swatch" />
+              Launched in the last 30 days
+              <span className="count">{number.format(catalog.recent.length)}</span>
+            </button>
+          )}
           <p className="hint">Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot.</p>
         </section>
       )}
@@ -151,9 +183,19 @@ export default function App() {
         </div>
       </section>
 
+      {focus && (
+        <div className="panel focus-bar" role="status">
+          Highlighting {number.format(focus.indices.length)} satellites {focus.label}
+          <button onClick={() => toggleFocus(null)}>Show all</button>
+        </div>
+      )}
+
       {info && (
         <InfoPanel
           info={info}
+          launchSize={catalog?.launches.get(selectedLaunch)?.length ?? 0}
+          showingLaunch={focus?.key === `launch ${selectedLaunch}`}
+          onShowLaunch={showLaunch}
           onFollow={() => globeRef.current.setFollow(!info.following)}
           onClose={() => globeRef.current.select(-1)}
         />
@@ -223,7 +265,7 @@ function Search({ records, onPick }) {
   );
 }
 
-function InfoPanel({ info, onFollow, onClose }) {
+function InfoPanel({ info, launchSize, showingLaunch, onShowLaunch, onFollow, onClose }) {
   const category = CATEGORY_BY_ID[info.category];
   return (
     <aside className="panel top-right info">
@@ -258,11 +300,23 @@ function InfoPanel({ info, onFollow, onClose }) {
           <dd>{info.lit == null ? '…' : info.lit > 0.5 ? 'In sunlight' : "In Earth's shadow"}</dd>
         </dl>
       )}
-      <button className="follow" onClick={onFollow}>
-        {info.following ? 'Stop riding along' : 'Ride along'}
-      </button>
+      <div className="actions">
+        <button className="follow" onClick={onFollow}>
+          {info.following ? 'Stop riding along' : 'Ride along'}
+        </button>
+        {launchSize > 1 && (
+          <button className="follow" onClick={onShowLaunch} aria-pressed={showingLaunch}>
+            {showingLaunch ? 'Show all' : `Its launch (${launchSize})`}
+          </button>
+        )}
+      </div>
     </aside>
   );
+}
+
+// "2026-256A" was the first object from the 256th launch of 2026
+function launchOf(record) {
+  return record && /^\d{4}-\d{3}/.exec(record.OBJECT_ID)?.[0];
 }
 
 function formatTime(ms) {

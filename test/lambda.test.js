@@ -50,6 +50,18 @@ test('a satellite in two groups keeps the first group', async () => {
   assert.equal(categoryFor(records[0], data.groups), 'starlink');
 });
 
+test('lists new launches, and keeps the old list if that group fails', async () => {
+  const download = async group => (group === 'last-30-days' ? fakeRecords('STARLINK', 5, 100000) : fakeCelesTrak(group));
+  const before = (await refreshCatalog({ download, log: quiet })).data;
+  assert.deepEqual(before.recent, [100000, 100001, 100002, 100003, 100004]);
+  const failing = async group => {
+    if (group === 'last-30-days') throw new Error('last-30-days: CelesTrak answered 500');
+    return fakeCelesTrak(group);
+  };
+  const { data } = await refreshCatalog({ previous: before, download: failing, log: quiet });
+  assert.deepEqual(data.recent, before.recent);
+});
+
 test('a failed group keeps its rows from the previous file', async () => {
   const before = (await refreshCatalog({ download: fakeCelesTrak, log: quiet, now: new Date('2026-11-20T00:00:00Z') })).data;
   const download = async group => {

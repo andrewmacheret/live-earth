@@ -1,6 +1,8 @@
 import { fromCompact, toCompact } from './catalog.js';
 import { GROUPS, NotUpdated } from './celestrak.js';
 
+const RECENT_GROUP = 'last-30-days';
+
 // Downloads every group in GROUPS, a few at a time. A group that fails keeps its rows from the
 // previous file, so one bad request doesn't throw away the rest.
 export async function refreshCatalog({ previous, download, log = console.log, concurrency = 4, now = new Date() }) {
@@ -31,8 +33,11 @@ export async function refreshCatalog({ previous, download, log = console.log, co
 
   const groups = GROUPS.map(([name, category], i) => ({ name, category, fetched: results[i].fetched }));
   const records = results.flatMap((result, i) => result.records.map(record => ({ ...record, GROUP: i })));
+  // new launches are also in other groups, so keep their ids in a separate list
+  const recentGroup = results[GROUPS.findIndex(([name]) => name === RECENT_GROUP)];
+  const recent = recentGroup?.fresh ? recentGroup.records.map(record => Number(record.NORAD_CAT_ID)) : previous?.recent ?? [];
   return {
-    data: toCompact(records, { groups, generated: now.toISOString() }),
+    data: { ...toCompact(records, { groups, generated: now.toISOString() }), recent },
     fresh: results.filter(result => result.fresh).length,
     failed: GROUPS.filter((_, i) => !results[i].fresh).map(([name]) => name)
   };

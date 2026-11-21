@@ -131,11 +131,11 @@ export class Globe {
     }
     this.points = createSatellitePoints(records.length);
     this.points.material.uniforms.uPixelRatio = this.pixelRatio;
-    const { aColor, aSize } = this.points.geometry.attributes;
-    this.categories.forEach((category, i) => {
-      COLORS[category].toArray(aColor.array, i * 3);
-      aSize.array[i] = SIZES[category];
-    });
+    const { aColor } = this.points.geometry.attributes;
+    this.categories.forEach((category, i) => COLORS[category].toArray(aColor.array, i * 3));
+    this.hidden = new Set();
+    this.focus = null;
+    this.updateSizes();
     this.scene.add(this.points);
 
     this.worker?.terminate();
@@ -153,12 +153,28 @@ export class Globe {
   }
 
   setHidden(hidden) {
-    const { aSize } = this.points.geometry.attributes;
+    this.hidden = hidden;
+    this.updateSizes();
+  }
+
+  // Highlight a list of satellites and fade the rest. Pass null to show everything again.
+  setFocus(indices) {
+    this.focus = indices ? new Set(indices) : null;
+    this.updateSizes();
+  }
+
+  updateSizes() {
+    const { aSize, aFocus } = this.points.geometry.attributes;
     this.categories.forEach((category, i) => {
-      this.shown[i] = hidden.has(category) ? 0 : 1;
-      aSize.array[i] = this.shown[i] ? SIZES[category] : 0;
+      const focused = this.focus?.has(i) ?? false;
+      let size = this.hidden.has(category) && !focused ? 0 : SIZES[category];
+      if (focused) size = Math.max(size * 1.6, 5);
+      aSize.array[i] = size;
+      aFocus.array[i] = !this.focus || focused ? 1 : 0;
+      // only highlighted satellites can be clicked while some are highlighted
+      this.shown[i] = size > 0 && aFocus.array[i] ? 1 : 0;
     });
-    aSize.needsUpdate = true;
+    aSize.needsUpdate = aFocus.needsUpdate = true;
   }
 
   select(index) {
