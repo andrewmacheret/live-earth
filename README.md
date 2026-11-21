@@ -14,6 +14,14 @@ See it running at [andrewmacheret.com/projects/live-earth](https://andrewmachere
 - A web worker (`src/sats/propagate.worker.js`) runs the SGP4 orbit model for every satellite about 20 times a second. Each frame moves the dots along their velocity in between.
 - The Earth spins under the orbits using sidereal time, and the sun position lights it, so the sunrise line, city lights and ocean glint are where they really are.
 
+## Planes (parked)
+
+The page can draw live planes from `data/planes.json` (see `src/planes/`), but there's no data source yet, so it shows none. When the file is missing, the page asks once and then stops.
+
+The plan was Lambda `LiveEarthPlanes` (`lambda/planes.js`) behind CloudFront, fetching [OpenSky Network](https://opensky-network.org/) at most every 3 minutes and only while someone is looking. That doesn't work because OpenSky blocks AWS addresses, and its docs ask people not to work around the block. The Lambda, its IAM role and its function URL exist but CloudFront doesn't route to them yet.
+
+About a quarter of OpenSky planes report positions minutes to hours old as if they were current. `toCompactPlanes` drops a plane whose position jumped further than its speed allows since the previous snapshot.
+
 ## Development
 
 Built with [Vite](https://vite.dev/). Needs Node.js 24.

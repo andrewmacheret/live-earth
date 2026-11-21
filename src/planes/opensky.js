@@ -15,10 +15,12 @@ export async function getToken({ clientId, clientSecret, timeoutMs = 20000 }) {
 }
 
 // Returns OpenSky's { time, states } answer. Pass no credentials to ask anonymously.
-export async function downloadStates({ clientId, clientSecret, timeoutMs = 60000 } = {}) {
+// With an account, `time` (in seconds) can go up to an hour back.
+export async function downloadStates({ clientId, clientSecret, time, timeoutMs = 20000 } = {}) {
   const headers = {};
   if (clientId && clientSecret) headers.Authorization = `Bearer ${await getToken({ clientId, clientSecret })}`;
-  const response = await fetch(STATES_URL, { headers, signal: AbortSignal.timeout(timeoutMs) });
+  const url = time ? `${STATES_URL}&time=${time}` : STATES_URL;
+  const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeoutMs) });
   if (!response.ok) {
     const wait = response.headers.get('x-rate-limit-retry-after-seconds');
     throw new Error(`OpenSky answered ${response.status}${wait ? `, out of credits for ${wait} s` : ''}`);

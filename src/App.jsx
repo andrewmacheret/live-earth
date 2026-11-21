@@ -83,7 +83,7 @@ export default function App() {
     };
   }, []);
 
-  // planes load after the satellites, so the globe shows up first. A missing file just means no planes.
+  // planes load after the satellites, so the globe shows up first. A missing file means no planes.
   useEffect(() => {
     if (!catalog) return;
     let stopped = false;
@@ -94,6 +94,8 @@ export default function App() {
       try {
         if (!document.hidden) {
           const response = await fetch('data/planes.json', { cache: 'no-cache' });
+          // no planes file at all, so stop asking
+          if (response.status === 404) return;
           const data = response.ok ? await response.json() : null;
           if (data && data.generated !== lastGenerated && !stopped) {
             lastGenerated = data.generated;

@@ -86,25 +86,68 @@ test('a plane flies along a great circle at its speed', () => {
   assert.ok(trackAt(p, h) > 50);
 });
 
-test('the planes Lambda saves the file, and refuses a suspiciously short list', async () => {
-  let saved;
-  const states = Array.from({ length: 1200 }, (_, i) => state(i.toString(16).padStart(6, '0')));
-  const handler = createPlanesHandler({
-    download: async () => ({ time: TIME, states, remaining: 3996 }),
-    loadPrevious: async () => {
-      throw new Error('NoSuchKey');
-    },
-    save: async body => (saved = JSON.parse(body)),
-    log: () => {}
-  });
-  assert.deepEqual(await handler(), { planes: 1200, lagging: 0, remaining: 3996 });
-  assert.equal(saved.count, 1200);
+// a fake OpenSky that counts calls, and a clock the test moves by hand
+function fakeOpenSky({ count = 1200, fail = false } = {}) {
+  const calls = [];
+  const clock = { ms: TIME * 1000 };
+  const download = async ({ time } = {}) => {
+    calls.push(time ?? 'now');
+    if (fail) throw new Error('OpenSky answered 503');
+    const at = time ?? Math.floor(clock.ms / 1000);
+    const states = Array.from({ length: count }, (_, i) => state(i.toString(16).padStart(6, '0'), { 3: at }));
+    return { time: at, states, remaining: 3990 };
+  };
+  return { calls, clock, download };
+}
 
-  const short = createPlanesHandler({
-    download: async () => ({ time: TIME, states: states.slice(0, 10) }),
-    loadPrevious: async () => null,
-    save: async () => assert.fail('should not save'),
-    log: () => {}
-  });
-  await assert.rejects(short(), /Only got 10 planes/);
+test('the planes Lambda asks OpenSky at most once every 3 minutes', async () => {
+  const sky = fakeOpenSky();
+  const handler = createPlanesHandler({ download: sky.download, now: () => sky.clock.ms, log: () => {} });
+
+  const first = await handler();
+  assert.equal(first.statusCode, 200);
+  assert.equal(JSON.parse(first.body).count, 1200);
+  assert.match(first.headers['Cache-Control'], /max-age=60/);
+  // a cold start also gets the planes from 3 minutes earlier, to spot late positions
+  assert.deepEqual(sky.calls, ['now', TIME - 180]);
+
+  sky.clock.ms += 2 * 60000;
+  await handler();
+  await handler();
+  assert.equal(sky.calls.length, 2);
+
+  sky.clock.ms += 60000;
+  await handler();
+  assert.deepEqual(sky.calls.slice(2), ['now']);
+});
+
+test('the planes Lambda keeps the last planes when OpenSky fails, and waits before retrying', async () => {
+  const sky = fakeOpenSky();
+  let fail = false;
+  const download = async options => {
+    if (fail) {
+      sky.calls.push('failed');
+      throw new Error('OpenSky answered 503');
+    }
+    return sky.download(options);
+  };
+  const handler = createPlanesHandler({ download, now: () => sky.clock.ms, log: () => {} });
+  await handler();
+
+  fail = true;
+  sky.clock.ms += 4 * 60000;
+  const stale = await handler();
+  assert.equal(stale.statusCode, 200);
+  assert.equal(JSON.parse(stale.body).time, TIME);
+  // another request 10 seconds later doesn't ask again
+  sky.clock.ms += 10000;
+  await handler();
+  assert.equal(sky.calls.filter(call => call === 'failed').length, 1);
+});
+
+test('the planes Lambda answers 503 when it has nothing yet, and refuses a suspiciously short list', async () => {
+  const down = createPlanesHandler({ download: fakeOpenSky({ fail: true }).download, log: () => {} });
+  assert.equal((await down()).statusCode, 503);
+  const short = createPlanesHandler({ download: fakeOpenSky({ count: 10 }).download, log: () => {} });
+  assert.equal((await short()).statusCode, 503);
 });
