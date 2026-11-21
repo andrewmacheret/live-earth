@@ -1,4 +1,4 @@
-// Lambda LiveEarth. A schedule runs it every 2 hours (when CelesTrak updates). It downloads every
+// Lambda LiveEarth. A schedule runs it once a day at 02:30 UTC. It downloads every
 // active satellite's orbit and writes one JSON file to S3, which CloudFront serves to the page.
 import { downloadGroup } from '../src/sats/celestrak.js';
 import { refreshCatalog } from '../src/sats/refresh.js';

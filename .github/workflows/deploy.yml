@@ -81,7 +81,7 @@ jobs:
           aws cloudfront create-invalidation \
             --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths '/projects/live-earth/index.html' '/projects/live-earth/'
-      # The schedule refreshes the data every 2 hours. Only fill it in here if it's missing.
+      # The schedule refreshes the data once a day. Only fill it in here if it's missing.
       - name: Make sure satellite data exists
         run: |
           if ! curl -sf -o /dev/null "$SITE_URL/data/satellites.json"; then
