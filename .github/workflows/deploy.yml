@@ -43,12 +43,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # The Lambda imports ../src/sats, so keep the folder layout. The SDK comes with the runtime.
+      # The Lambdas import ../src/sats and ../src/planes, so keep the folder layout. The SDK comes with the runtime.
       - name: Package Lambda
         run: |
-          mkdir -p build/lambda build/src/sats
-          cp lambda/handler.js build/lambda/
+          mkdir -p build/lambda build/src/sats build/src/planes
+          cp lambda/*.js build/lambda/
           cp src/sats/*.js build/src/sats/
+          cp src/planes/*.js build/src/planes/
           echo '{"type":"module"}' > build/package.json
           (cd build && zip -qr ../lambda.zip .)
       - uses: aws-actions/configure-aws-credentials@v6

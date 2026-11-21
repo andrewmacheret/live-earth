@@ -3,11 +3,14 @@ import { Globe } from './globe/Globe.js';
 import { articleFor, fetchSummary, trackerLinks } from './sats/about.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
 import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
+import { fromCompactPlanes } from './planes/compact.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
 const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 const number = new Intl.NumberFormat();
+// checking costs almost nothing when the file hasn't changed, since the browser asks "has it changed?"
+const PLANES_CHECK_MS = 60000;
 
 export default function App() {
   const containerRef = useRef(null);
@@ -22,6 +25,7 @@ export default function App() {
   const [focus, setFocus] = useState(null);
   const [favorites, setFavorites] = useState(loadFavorites);
   useEffect(() => saveFavorites(favorites), [favorites]);
+  const [planes, setPlanes] = useState(null);
 
   useEffect(() => {
     const globe = new Globe(containerRef.current, { onHover: setHover, onInfo: setInfo });
@@ -54,9 +58,11 @@ export default function App() {
           if (wiki[record.NORAD_CAT_ID]) (withArticles[categories[i]] ??= []).push(i);
         });
         setCatalog({ records, counts, launches, recent, wiki, withArticles, indexById, generated: data.generated });
-        const wanted = Number(new URLSearchParams(location.search).get('sat'));
+        const params = new URLSearchParams(location.search);
+        const wanted = Number(params.get('sat'));
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
-        if (start < 0) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
+        // a link to a plane opens on that plane once the planes load
+        if (start < 0 && !params.get('plane')) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
         if (start >= 0) {
           globe.select(start);
           globe.faceSelected(false);
@@ -77,7 +83,45 @@ export default function App() {
     };
   }, []);
 
-  const selectedRecord = info ? catalog?.records[info.index] : null;
+  // planes load after the satellites, so the globe shows up first. A missing file just means no planes.
+  useEffect(() => {
+    if (!catalog) return;
+    let stopped = false;
+    let timer;
+    let lastGenerated = null;
+    let first = true;
+    const load = async () => {
+      try {
+        if (!document.hidden) {
+          const response = await fetch('data/planes.json', { cache: 'no-cache' });
+          const data = response.ok ? await response.json() : null;
+          if (data && data.generated !== lastGenerated && !stopped) {
+            lastGenerated = data.generated;
+            const list = fromCompactPlanes(data);
+            globeRef.current.setPlanes(list, data.time * 1000);
+            setPlanes({ list, generated: data.generated });
+            const wanted = first && new URLSearchParams(location.search).get('plane');
+            if (wanted && list.some(plane => plane.icao === wanted)) {
+              globeRef.current.selectPlane(wanted);
+              globeRef.current.facePlane();
+            }
+            first = false;
+          }
+        }
+      } catch {
+        // try again next time
+      }
+      if (!stopped) timer = setTimeout(load, PLANES_CHECK_MS);
+    };
+    load();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [catalog]);
+
+  const isPlane = info?.type === 'plane';
+  const selectedRecord = info && !isPlane ? catalog?.records[info.index] : null;
   const article = useMemo(() => selectedRecord && articleFor(selectedRecord, catalog.wiki), [selectedRecord, catalog]);
   // undefined while loading, null when Wikipedia has nothing
   const [summary, setSummary] = useState(null);
@@ -96,6 +140,12 @@ export default function App() {
     globeRef.current.faceSelected();
   };
 
+  const pickPlane = icao => {
+    if (hidden.has('planes')) toggleCategory('planes');
+    globeRef.current.selectPlane(icao);
+    globeRef.current.facePlane();
+  };
+
   const randomItem = list => list[Math.floor(Math.random() * list.length)];
   const surprise = () => {
     const groups = Object.values(catalog.withArticles);
@@ -107,13 +157,17 @@ export default function App() {
 
   // put the selected satellite in the address bar so links open on it (the ISS is the default)
   const selectedId = info?.noradId;
+  const selectedPlane = info?.icao;
   useEffect(() => {
     if (!catalog) return;
     const url = new URL(location.href);
     if (selectedId && selectedId !== ISS) url.searchParams.set('sat', selectedId);
     else url.searchParams.delete('sat');
+    if (selectedPlane) url.searchParams.set('plane', selectedPlane);
+    // keep a plane from the link until the planes have loaded
+    else if (planes) url.searchParams.delete('plane');
     if (url.href !== location.href) history.replaceState(null, '', url);
-  }, [selectedId, catalog]);
+  }, [selectedId, selectedPlane, catalog, planes]);
 
   const changeSpeed = value => {
     const globe = globeRef.current;
@@ -138,7 +192,7 @@ export default function App() {
     applyHidden(next);
   };
 
-  const toggleAll = () => applyHidden(hidden.size ? new Set() : new Set(CATEGORIES.map(c => c.id)));
+  const toggleAll = () => applyHidden(hidden.size ? new Set() : new Set([...CATEGORIES.map(c => c.id), 'planes']));
 
   const applyFocus = value => {
     setFocus(value);
@@ -174,6 +228,7 @@ export default function App() {
     });
 
   const live = speed === 1 && Math.abs(simTime - Date.now()) < 3000;
+  const planesNearLive = Math.abs(simTime - Date.now()) < 5 * 60000;
 
   return (
     <>
@@ -183,12 +238,21 @@ export default function App() {
         <h1>Live Earth</h1>
         <p className="subtitle">
           {catalog
-            ? `${number.format(catalog.records.length)} satellites, where they are right now`
+            ? `${number.format(catalog.records.length)} satellites${
+                planes ? ` and ${number.format(planes.list.length)} planes` : ''
+              }, where they are right now`
             : error || 'Loading satellites…'}
         </p>
         {catalog && (
           <div className="search-row">
-            <Search records={catalog.records} wiki={catalog.wiki} favorites={favoriteIndices} onPick={pickAndFace} />
+            <Search
+              records={catalog.records}
+              wiki={catalog.wiki}
+              favorites={favoriteIndices}
+              planes={planes?.list ?? []}
+              onPick={pickAndFace}
+              onPickPlane={pickPlane}
+            />
             {Object.keys(catalog.withArticles).length > 0 && (
               <button className="surprise" onClick={surprise} title="Jump to a random satellite that has a Wikipedia article">
                 Surprise me
@@ -216,6 +280,20 @@ export default function App() {
               <span className="count">{number.format(catalog.counts[c.id])}</span>
             </button>
           ))}
+          {planes && (
+            <button
+              className={`planes-row ${hidden.has('planes') ? 'off' : ''}`}
+              onClick={() => toggleCategory('planes')}
+              aria-pressed={!hidden.has('planes')}
+              title={planesNearLive ? undefined : 'Planes only fly in straight lines, so they only show near the live time'}
+            >
+              <span className="plane-icon" aria-hidden="true">
+                ✈
+              </span>
+              Planes
+              <span className="count">{planesNearLive ? number.format(planes.list.length) : 'live only'}</span>
+            </button>
+          )}
           {favoriteIndices.length > 0 && (
             <button className="recent" onClick={showFavorites} aria-pressed={focus?.key === 'favorites'}>
               <span className="star">★</span>
@@ -283,7 +361,9 @@ export default function App() {
         </div>
       )}
 
-      {info && (
+      {isPlane && <PlanePanel info={info} onClose={() => globeRef.current.selectPlane(null)} />}
+
+      {info && !isPlane && (
         <InfoPanel
           info={info}
           article={article}
@@ -306,7 +386,14 @@ export default function App() {
 
       <footer className="credits">
         <a href="https://andrewmacheret.com/">More projects</a> · Orbits from <a href="https://celestrak.org/">CelesTrak</a>
-        {catalog && `, updated ${ageLabel(catalog.generated)}`} · Earth textures from{' '}
+        {catalog && `, updated ${ageLabel(catalog.generated)}`}
+        {planes && (
+          <>
+            {' '}
+            · Planes from <a href="https://opensky-network.org/">OpenSky Network</a>, updated {ageLabel(planes.generated)}
+          </>
+        )}{' '}
+        · Earth textures from{' '}
         <a href="https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets">three.js</a> ·{' '}
         <a href="https://github.com/andrewmacheret/live-earth">Source</a>
       </footer>
@@ -314,7 +401,7 @@ export default function App() {
   );
 }
 
-function Search({ records, wiki, favorites, onPick }) {
+function Search({ records, wiki, favorites, planes, onPick, onPickPlane }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
@@ -328,22 +415,28 @@ function Search({ records, wiki, favorites, onPick }) {
       const title = wiki[id]?.toUpperCase() ?? '';
       if (name.includes(q) || title.includes(q) || String(id) === q) {
         const starts = name.startsWith(q) || title.startsWith(q) || String(id) === q;
-        out.push([starts ? 0 : 1, i]);
+        out.push({ rank: starts ? 0 : 1, type: 'sat', index: i });
+      }
+    }
+    // planes only match from the start, since callsigns are short codes like UAL927
+    for (let i = 0, found = 0; i < planes.length && found < 50; i++) {
+      const { callsign, icao } = planes[i];
+      if (callsign.startsWith(q) || icao.toUpperCase() === q) {
+        out.push({ rank: 0, type: 'plane', index: i });
+        found++;
       }
     }
     // names that start with what you typed go first
-    return out
-      .sort((a, b) => a[0] - b[0])
-      .slice(0, 8)
-      .map(([, i]) => i);
-  }, [query, records, wiki]);
+    return out.sort((a, b) => a.rank - b.rank).slice(0, 8);
+  }, [query, records, wiki, planes]);
 
   // with nothing typed, show your favorites instead
   const showingFavorites = !query.trim() && favorites.length > 0;
-  const list = showingFavorites ? favorites : matches;
+  const list = showingFavorites ? favorites.map(index => ({ type: 'sat', index })) : matches;
 
-  const pick = index => {
-    onPick(index);
+  const pick = item => {
+    if (item.type === 'plane') onPickPlane(planes[item.index].icao);
+    else onPick(item.index);
     setQuery('');
     inputRef.current.blur();
   };
@@ -354,7 +447,7 @@ function Search({ records, wiki, favorites, onPick }) {
         ref={inputRef}
         type="search"
         value={query}
-        placeholder="Find a satellite: ISS, Hubble, STARLINK-1008…"
+        placeholder={planes.length ? 'Find a satellite or flight: ISS, Hubble, UAL…' : 'Find a satellite: ISS, Hubble, STARLINK-1008…'}
         onChange={event => {
           setQuery(event.target.value);
           setOpen(true);
@@ -366,23 +459,40 @@ function Search({ records, wiki, favorites, onPick }) {
           if (event.key === 'Enter' && list.length) pick(list[0]);
           if (event.key === 'Escape') inputRef.current.blur();
         }}
-        aria-label="Find a satellite"
+        aria-label={planes.length ? 'Find a satellite or flight' : 'Find a satellite'}
       />
       {open && list.length > 0 && (
         // keep the input focused while clicking, so the list doesn't close first
         <ul onMouseDown={event => event.preventDefault()}>
           {showingFavorites && <li className="list-title">★ Favorites</li>}
-          {list.map(i => (
-            <li key={i}>
-              <button onClick={() => pick(i)}>
-                <span>
-                  {records[i].OBJECT_NAME}
-                  {otherName(records[i], wiki) && <span className="also"> {otherName(records[i], wiki)}</span>}
-                </span>
-                <span className="count">{records[i].NORAD_CAT_ID}</span>
-              </button>
-            </li>
-          ))}
+          {list.map(item =>
+            item.type === 'plane' ? (
+              <li key={`plane ${item.index}`}>
+                <button onClick={() => pick(item)}>
+                  <span>
+                    <span className="plane-icon" aria-hidden="true">
+                      ✈{' '}
+                    </span>
+                    {planes[item.index].callsign || planes[item.index].icao.toUpperCase()}
+                    <span className="also"> {planes[item.index].country}</span>
+                  </span>
+                  <span className="count">{planes[item.index].icao.toUpperCase()}</span>
+                </button>
+              </li>
+            ) : (
+              <li key={item.index}>
+                <button onClick={() => pick(item)}>
+                  <span>
+                    {records[item.index].OBJECT_NAME}
+                    {otherName(records[item.index], wiki) && (
+                      <span className="also"> {otherName(records[item.index], wiki)}</span>
+                    )}
+                  </span>
+                  <span className="count">{records[item.index].NORAD_CAT_ID}</span>
+                </button>
+              </li>
+            )
+          )}
         </ul>
       )}
     </div>
@@ -457,6 +567,73 @@ function InfoPanel(props) {
   );
 }
 
+function PlanePanel({ info, onClose }) {
+  const name = info.callsign || info.icao.toUpperCase();
+  const feetPerMin = Math.round((info.climb * 196.85) / 100) * 100;
+  const links = [
+    info.callsign && { label: 'FlightAware', href: `https://www.flightaware.com/live/flight/${info.callsign}` },
+    { label: 'ADS-B Exchange', href: `https://globe.adsbexchange.com/?icao=${info.icao}` },
+    { label: 'adsb.lol', href: `https://adsb.lol/?icao=${info.icao}` }
+  ].filter(Boolean);
+  return (
+    <aside className="panel top-right info">
+      <button className="close" onClick={onClose} aria-label="Close">
+        ×
+      </button>
+      <div className="kind plane-kind">{info.kind ?? 'Plane'}</div>
+      <h2>{name}</h2>
+      <p className="ids">
+        ICAO {info.icao.toUpperCase()} · registered in {info.country}
+      </p>
+      {info.shown ? (
+        <dl>
+          <dt>Altitude</dt>
+          <dd>
+            {number.format(Math.round((info.altitude * 3.28084) / 100) * 100)} ft{' '}
+            <span className="muted">({(info.altitude / 1000).toFixed(1)} km)</span>
+          </dd>
+          <dt>Speed</dt>
+          <dd>
+            {number.format(Math.round(info.speed * 1.94384))} knots{' '}
+            <span className="muted">({number.format(Math.round(info.speed * 3.6))} km/h)</span>
+          </dd>
+          <dt>Heading</dt>
+          <dd>
+            {Math.round(info.track)}° {compass(info.track)}
+          </dd>
+          <dt>Climb</dt>
+          <dd>
+            {Math.abs(feetPerMin) < 200
+              ? 'Level'
+              : `${feetPerMin > 0 ? 'Climbing' : 'Descending'} ${number.format(Math.abs(feetPerMin))} ft/min`}
+          </dd>
+          <dt>Over</dt>
+          <dd>{formatLatLon(info.lat, info.lon)}</dd>
+          <dt>Last heard</dt>
+          <dd>{ageLabel(new Date(info.at).toISOString())}</dd>
+        </dl>
+      ) : (
+        <p>Planes only fly in straight lines here, so they only show near the live time.</p>
+      )}
+      <section className="about">
+        <p className="about-links">
+          {links.map(link => (
+            <a key={link.label} href={link.href} target="_blank" rel="noreferrer">
+              {link.label}
+            </a>
+          ))}
+        </p>
+      </section>
+    </aside>
+  );
+}
+
+function compass(degrees) {
+  return ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'][
+    Math.round(degrees / 45) % 8
+  ];
+}
+
 function About({ article, summary, noradId }) {
   return (
     <section className="about">
@@ -516,9 +693,11 @@ function offsetLabel(ms) {
 }
 
 function ageLabel(iso) {
-  const hours = (Date.now() - new Date(iso).getTime()) / 3600000;
-  if (hours < 1) return 'within the hour';
-  if (hours < 48) return `${Math.round(hours)} h ago`;
+  const seconds = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (seconds < 60) return 'just now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`;
+  const hours = seconds / 3600;
+  if (hours < 48) return `${Math.floor(hours)} h ${Math.floor((seconds % 3600) / 60)} min ago`;
   return `${Math.round(hours / 24)} days ago`;
 }
 

@@ -3,7 +3,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { degreesLat, degreesLong, eciToGeodetic, gstime, json2satrec, propagate } from 'satellite.js';
 import { CATEGORIES } from '../sats/catalog.js';
 import { behindEarth, EARTH_RADIUS_KM, STRIDE, sunDirection, toScene } from '../sats/frames.js';
+import { flyPath, pathOf, toLatLon, trackAt } from '../planes/motion.js';
 import { createEarth } from './earth.js';
+import { createPlanePoints } from './planePoints.js';
 import { createSatellitePoints } from './satellitePoints.js';
 import { createStars } from './stars.js';
 
@@ -23,6 +25,15 @@ const COLORS = Object.fromEntries(CATEGORIES.map(c => [c.id, new THREE.Color(c.c
 const ORBIT_POINTS = 256;
 const PICK_RADIUS_PX = 14;
 const FLY_MS = 1400;
+const PLANE_SIZE = 5;
+// how long planes take to slide onto their new paths when fresh data arrives
+const PLANE_BLEND_MS = 3000;
+// planes only fly in straight lines, so they fade out when you move this far from the data's time
+const PLANE_FADE_START_MS = 5 * 60000;
+const PLANE_FADE_END_MS = 10 * 60000;
+// the line in front of a selected plane shows where it's headed over the next 10 minutes
+const PLANE_AHEAD_S = 600;
+const PLANE_AHEAD_POINTS = 32;
 
 const markerVertex = /* glsl */ `
   uniform float uPixelRatio;
@@ -75,6 +86,11 @@ export class Globe {
     this.follow = false;
     this.flight = null;
     this.lastInfoAt = 0;
+    this.planeList = [];
+    this.planePaths = [];
+    // plane times are seconds from here, so they fit in the graphics card's 32-bit numbers
+    this.planeBase = Math.floor(Date.now() / 1000);
+    this.selectedPlane = null;
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -119,6 +135,17 @@ export class Globe {
     this.orbitGroup = new THREE.Group();
     this.groupOrbits = [];
     this.scene.add(this.marker, this.orbit, this.orbitGroup);
+
+    const aheadGeometry = new THREE.BufferGeometry();
+    aheadGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(PLANE_AHEAD_POINTS * 3), 3));
+    this.planeAhead = new THREE.Line(
+      aheadGeometry,
+      new THREE.LineDashedMaterial({ dashSize: 0.004, gapSize: 0.003, transparent: true, opacity: 0.7, depthWrite: false })
+    );
+    this.planeAhead.frustumCulled = false;
+    this.planeAhead.visible = false;
+    // planes ride on the Earth, so they turn with it
+    this.globe.earth.add(this.planeAhead);
 
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
@@ -198,9 +225,87 @@ export class Globe {
     this.camera.position.copy(view.normalize().multiplyScalar(3.8));
   }
 
+  // Load a fresh list of planes. Planes we already had slide from their old path to the new one.
+  setPlanes(list, dataTime) {
+    const old = new Map(this.planeList.map((plane, i) => [plane.icao, this.planePaths[i]]));
+    const paths = list.map(plane => pathOf(plane, this.planeBase));
+    this.planeOldPaths = list.map((plane, i) => old.get(plane.icao) ?? paths[i]);
+    if (this.planePoints) {
+      this.globe.earth.remove(this.planePoints);
+      this.planePoints.geometry.dispose();
+      this.planePoints.material.dispose();
+    }
+    const points = createPlanePoints(list.length);
+    points.material.uniforms.uPixelRatio = this.pixelRatio;
+    const a = points.geometry.attributes;
+    paths.forEach((path, i) => {
+      const before = this.planeOldPaths[i];
+      a.aStart.array.set(path.start, i * 3);
+      a.aDir.array.set(path.dir, i * 3);
+      a.aRate.array[i] = path.rate;
+      a.aT0.array[i] = path.t0;
+      a.aOldStart.array.set(before.start, i * 3);
+      a.aOldDir.array.set(before.dir, i * 3);
+      a.aOldRate.array[i] = before.rate;
+      a.aOldT0.array[i] = before.t0;
+      a.aSize.array[i] = PLANE_SIZE;
+    });
+    this.planePoints = points;
+    this.planeList = list;
+    this.planePaths = paths;
+    this.planeDataTime = dataTime;
+    this.planeBlendStart = old.size ? performance.now() : -Infinity;
+    points.visible = !this.hidden?.has('planes');
+    this.globe.earth.add(points);
+  }
+
   setHidden(hidden) {
     this.hidden = hidden;
     this.updateSizes();
+    if (this.planePoints) this.planePoints.visible = !hidden.has('planes');
+    if (hidden.has('planes') && this.selectedPlane) this.selectPlane(null);
+  }
+
+  planesShown() {
+    return this.planePoints?.visible && this.planePoints.material.uniforms.uOpacity.value > 0.3;
+  }
+
+  // Select a plane by its ICAO address, or pass null. Satellites and planes can't both be selected.
+  selectPlane(icao) {
+    if (icao && this.selected >= 0) this.select(-1);
+    this.selectedPlane = icao;
+    this.planeAhead.visible = this.marker.visible = !!icao;
+    if (icao) this.marker.material.uniforms.uColor.value.set('#ffffff');
+    this.lastInfoAt = 0;
+    if (!icao) this.callbacks.onInfo?.(null);
+  }
+
+  selectedPlaneIndex() {
+    if (!this.selectedPlane) return -1;
+    if (this.planeList[this.selectedPlaneCache]?.icao !== this.selectedPlane) {
+      this.selectedPlaneCache = this.planeList.findIndex(plane => plane.icao === this.selectedPlane);
+    }
+    return this.selectedPlaneCache;
+  }
+
+  // Swing the camera around until the selected plane is in front, and zoom in a little.
+  facePlane() {
+    const i = this.selectedPlaneIndex();
+    if (i < 0) return;
+    const to = this.globe.earth.localToWorld(new THREE.Vector3(...flyPath(this.planePaths[i], this.planeTime()))).normalize();
+    const from = this.camera.position.clone().normalize();
+    const startDistance = this.camera.position.length();
+    const endDistance = Math.min(startDistance, 1.6);
+    const turn = new THREE.Quaternion().setFromUnitVectors(from, to);
+    const partial = new THREE.Quaternion();
+    this.fly(k => {
+      partial.identity().slerp(turn, k);
+      this.camera.position.copy(from).applyQuaternion(partial).multiplyScalar(startDistance + (endDistance - startDistance) * k);
+    });
+  }
+
+  planeTime() {
+    return this.simNow() / 1000 - this.planeBase;
   }
 
   // Highlight a list of satellites and fade the rest. Pass null to show everything again.
@@ -224,6 +329,8 @@ export class Globe {
   }
 
   select(index) {
+    this.selectedPlane = null;
+    this.planeAhead.visible = false;
     this.selected = index;
     this.satrec = index >= 0 ? json2satrec(this.records[index]) : null;
     this.orbitTime = null;
@@ -324,11 +431,75 @@ export class Globe {
     lit.needsUpdate = true;
   }
 
+  // Where plane i is right now and which way it's headed, sliding between paths like the shader does.
+  planeNow(i, t, blend) {
+    const heading = [0, 0, 0];
+    const position = flyPath(this.planePaths[i], t, [0, 0, 0], heading);
+    if (blend < 1) {
+      const oldHeading = [0, 0, 0];
+      const oldPosition = flyPath(this.planeOldPaths[i], t, [0, 0, 0], oldHeading);
+      const r = Math.hypot(...this.planePaths[i].start);
+      const mixed = position.map((p, k) => oldPosition[k] + (p - oldPosition[k]) * blend);
+      const length = Math.hypot(...mixed);
+      for (let k = 0; k < 3; k++) {
+        position[k] = (mixed[k] / length) * r;
+        heading[k] = oldHeading[k] + (heading[k] - oldHeading[k]) * blend;
+      }
+    }
+    return { position, heading };
+  }
+
+  updatePlanes(now) {
+    const uniforms = this.planePoints.material.uniforms;
+    const t = now / 1000 - this.planeBase;
+    const blend = Math.min(1, (performance.now() - this.planeBlendStart) / PLANE_BLEND_MS);
+    const away = Math.abs(now - this.planeDataTime);
+    uniforms.uTime.value = t;
+    uniforms.uBlend.value = blend;
+    uniforms.uOpacity.value = 1 - THREE.MathUtils.clamp((away - PLANE_FADE_START_MS) / (PLANE_FADE_END_MS - PLANE_FADE_START_MS), 0, 1);
+    if (!this.selectedPlane) return;
+    const i = this.selectedPlaneIndex();
+    // the plane landed or flew out of range since the last update
+    if (i < 0) return this.selectPlane(null);
+
+    const { position, heading } = this.planeNow(i, t, blend);
+    const world = this.globe.earth.localToWorld(new THREE.Vector3(...position));
+    this.marker.geometry.attributes.position.array.set([world.x, world.y, world.z]);
+    this.marker.geometry.attributes.position.needsUpdate = true;
+    this.marker.visible = this.planeAhead.visible = this.planesShown();
+
+    const path = this.planePaths[i];
+    const ahead = this.planeAhead.geometry.attributes.position.array;
+    const step = [0, 0, 0];
+    for (let k = 0; k < PLANE_AHEAD_POINTS; k++) {
+      flyPath(path, t + (k / (PLANE_AHEAD_POINTS - 1)) * PLANE_AHEAD_S, step);
+      ahead.set(step, k * 3);
+    }
+    // start the line at the plane even while it's still sliding onto its new path
+    ahead.set(position, 0);
+    this.planeAhead.geometry.attributes.position.needsUpdate = true;
+    this.planeAhead.computeLineDistances();
+
+    if (performance.now() - this.lastInfoAt > 200) {
+      this.lastInfoAt = performance.now();
+      const plane = this.planeList[i];
+      this.callbacks.onInfo?.({
+        type: 'plane',
+        ...plane,
+        ...toLatLon(position),
+        track: trackAt(position, heading),
+        shown: this.planesShown()
+      });
+    }
+  }
+
   frame() {
     const now = this.simNow();
     const date = new Date(now);
     this.globe.earth.rotation.y = gstime(date);
+    this.globe.earth.updateMatrixWorld();
     this.globe.setSun(sunDirection(date));
+    if (this.planePoints) this.updatePlanes(now);
 
     if (this.latest) {
       // fill in the motion between worker updates by moving each satellite along its velocity
@@ -420,39 +591,58 @@ export class Globe {
     };
   }
 
+  // Returns the closest satellite or plane under the pointer, like { type: 'plane', index: 12 }, or null.
   pick(x, y) {
-    if (!this.points) return -1;
+    if (!this.points) return null;
     const { width, height } = this.renderer.domElement.getBoundingClientRect();
-    const e = new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse).elements;
-    const positions = this.points.geometry.attributes.position.array;
-    const lit = this.points.geometry.attributes.aLit.array;
+    const viewProjection = new THREE.Matrix4().multiplyMatrices(this.camera.projectionMatrix, this.camera.matrixWorldInverse);
     const camera = this.camera.position;
     const candidates = [];
-    for (let i = 0; i < this.records.length; i++) {
-      if (!this.shown[i] || lit[i] < 0) continue;
-      const px = positions[i * 3];
-      const py = positions[i * 3 + 1];
-      const pz = positions[i * 3 + 2];
+    const consider = (e, type, index, px, py, pz) => {
       const w = e[3] * px + e[7] * py + e[11] * pz + e[15];
-      if (w <= 0) continue;
+      if (w <= 0) return;
       const sx = ((e[0] * px + e[4] * py + e[8] * pz + e[12]) / w + 1) * 0.5 * width;
       const sy = (1 - (e[1] * px + e[5] * py + e[9] * pz + e[13]) / w) * 0.5 * height;
       const d2 = (sx - x) ** 2 + (sy - y) ** 2;
-      if (d2 < PICK_RADIUS_PX ** 2) candidates.push([d2, i]);
+      if (d2 < PICK_RADIUS_PX ** 2) candidates.push({ d2, type, index });
+    };
+
+    const positions = this.points.geometry.attributes.position.array;
+    const lit = this.points.geometry.attributes.aLit.array;
+    let e = viewProjection.elements;
+    for (let i = 0; i < this.records.length; i++) {
+      if (!this.shown[i] || lit[i] < 0) continue;
+      consider(e, 'sat', i, positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
     }
-    candidates.sort((a, b) => a[0] - b[0]);
+    if (this.planesShown()) {
+      // plane positions are in the Earth's frame, so fold the Earth's turn into the matrix
+      e = viewProjection.clone().multiply(this.globe.earth.matrixWorld).elements;
+      const t = this.planeTime();
+      const p = [0, 0, 0];
+      for (let i = 0; i < this.planePaths.length; i++) {
+        flyPath(this.planePaths[i], t, p);
+        consider(e, 'plane', i, p[0], p[1], p[2]);
+      }
+    }
+
+    candidates.sort((a, b) => a.d2 - b.d2);
     const point = new THREE.Vector3();
-    for (const [, i] of candidates) {
-      if (!behindEarth(camera, point.fromArray(positions, i * 3))) return i;
+    for (const candidate of candidates) {
+      if (candidate.type === 'sat') point.fromArray(positions, candidate.index * 3);
+      else this.globe.earth.localToWorld(point.fromArray(flyPath(this.planePaths[candidate.index], this.planeTime())));
+      if (!behindEarth(camera, point)) return candidate;
     }
-    return -1;
+    return null;
   }
 
-  hover(index) {
-    this.renderer.domElement.style.cursor = index >= 0 ? 'pointer' : '';
-    this.callbacks.onHover?.(
-      index >= 0 ? { index, name: this.records[index].OBJECT_NAME, x: this.pointer.x, y: this.pointer.y } : null
-    );
+  hover(hit) {
+    this.renderer.domElement.style.cursor = hit ? 'pointer' : '';
+    if (!hit) return this.callbacks.onHover?.(null);
+    const name =
+      hit.type === 'sat'
+        ? this.records[hit.index].OBJECT_NAME
+        : this.planeList[hit.index].callsign || this.planeList[hit.index].icao.toUpperCase();
+    this.callbacks.onHover?.({ ...hit, name, x: this.pointer.x, y: this.pointer.y });
   }
 
   listen() {
@@ -476,8 +666,9 @@ export class Globe {
     canvas.addEventListener('pointerup', event => {
       const up = local(event);
       if (!this.downAt || Math.hypot(up.x - this.downAt.x, up.y - this.downAt.y) > 6) return;
-      const index = this.pick(up.x, up.y);
-      if (index >= 0 || this.selected >= 0) this.select(index);
+      const hit = this.pick(up.x, up.y);
+      if (hit?.type === 'plane') this.selectPlane(this.planeList[hit.index].icao);
+      else if (hit || this.selected >= 0 || this.selectedPlane) this.select(hit ? hit.index : -1);
     });
   }
 

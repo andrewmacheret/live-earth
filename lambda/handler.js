@@ -3,6 +3,7 @@
 import { downloadGroup } from '../src/sats/celestrak.js';
 import { refreshCatalog } from '../src/sats/refresh.js';
 import { downloadWikiTitles, pickTitles } from '../src/sats/wiki.js';
+import { loadFromS3, saveToS3 } from './s3.js';
 
 // short browser cache, then CloudFront and browsers revalidate with the ETag
 const CACHE_CONTROL = 'public, max-age=300, stale-while-revalidate=86400';
@@ -33,33 +34,9 @@ export function createHandler({ download, downloadWiki = async () => ({}), loadP
   };
 }
 
-async function s3() {
-  const sdk = await import('@aws-sdk/client-s3');
-  return { sdk, client: new sdk.S3Client({}) };
-}
-
-async function loadFromS3() {
-  const { sdk, client } = await s3();
-  const result = await client.send(new sdk.GetObjectCommand({ Bucket: process.env.BUCKET, Key: process.env.KEY }));
-  return JSON.parse(await result.Body.transformToString());
-}
-
-async function saveToS3(body) {
-  const { sdk, client } = await s3();
-  await client.send(
-    new sdk.PutObjectCommand({
-      Bucket: process.env.BUCKET,
-      Key: process.env.KEY,
-      Body: body,
-      ContentType: 'application/json',
-      CacheControl: CACHE_CONTROL
-    })
-  );
-}
-
 export const handler = createHandler({
   download: downloadGroup,
   downloadWiki: downloadWikiTitles,
   loadPrevious: loadFromS3,
-  save: saveToS3
+  save: body => saveToS3(body, CACHE_CONTROL)
 });
