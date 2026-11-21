@@ -25,7 +25,6 @@ export const GROUPS = [
   ['iridium-NEXT', 'comms'],
   ['orbcomm', 'comms'],
   ['globalstar', 'comms'],
-  ['swarm', 'comms'],
   ['qianfan', 'comms'],
   ['hulianwang', 'comms'],
   ['amateur', 'comms'],
@@ -40,7 +39,6 @@ export const GROUPS = [
   ['military', 'military'],
   ['radar', 'military'],
   ['cubesat', 'other'],
-  ['other', 'other'],
   ['last-30-days', 'other']
 ];
 
