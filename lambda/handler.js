@@ -18,10 +18,10 @@ export function createHandler({ download, loadPrevious, save, log = console.log 
     if (failed.length) log(`Kept old data for: ${failed.join(', ')}`);
     if (!fresh) throw new Error('Every group failed, so nothing was saved');
     // a short list means CelesTrak sent something odd, so keep the last good file
-    if (data.satellites.length < 1000) throw new Error(`Only got ${data.satellites.length} satellites`);
+    if (data.count < 1000) throw new Error(`Only got ${data.count} satellites`);
     await save(JSON.stringify(data));
-    log(`Saved ${data.satellites.length} satellites, ${fresh} groups fresh`);
-    return { satellites: data.satellites.length, fresh, failed };
+    log(`Saved ${data.count} satellites, ${fresh} groups fresh`);
+    return { satellites: data.count, fresh, failed };
   };
 }
 

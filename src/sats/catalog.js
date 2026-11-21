@@ -1,5 +1,6 @@
-// Orbit data is stored as rows of these fields, in this order, to keep the file small.
+// Orbit data is stored as one array per field, which compresses better than rows.
 // The first 13 are CelesTrak's OMM fields. GROUP is an index into the file's `groups` list.
+// EPOCH is stored as milliseconds from `generated`, since the date strings were the biggest part.
 export const FIELDS = [
   'OBJECT_NAME',
   'OBJECT_ID',
@@ -76,22 +77,38 @@ function splitCsvLine(line) {
 
 // Keeps the first row for each satellite, so put the records you prefer first.
 export function toCompact(records, { groups = [], generated = new Date().toISOString() } = {}) {
+  const base = Date.parse(generated);
   const seen = new Set();
-  const satellites = [];
+  const columns = Object.fromEntries(FIELDS.map(key => [key, []]));
   for (const record of records) {
     const id = Number(record.NORAD_CAT_ID);
     if (!record.OBJECT_NAME || !record.EPOCH || seen.has(id)) continue;
     seen.add(id);
-    satellites.push(
-      FIELDS.map(key => {
-        if (key === 'GROUP') return record.GROUP ?? -1;
-        return TEXT_FIELDS.has(key) ? String(record[key]) : Number(record[key]);
-      })
-    );
+    for (const key of FIELDS) {
+      let value;
+      if (key === 'GROUP') value = record.GROUP ?? -1;
+      else if (key === 'EPOCH') value = Date.parse(withZ(record.EPOCH)) - base;
+      else value = TEXT_FIELDS.has(key) ? String(record[key]) : Number(record[key]);
+      columns[key].push(value);
+    }
   }
-  return { generated, source: 'CelesTrak', groups, fields: FIELDS, satellites };
+  return { generated, source: 'CelesTrak', groups, count: seen.size, columns };
 }
 
 export function fromCompact(data) {
-  return data.satellites.map(row => Object.fromEntries(data.fields.map((key, i) => [key, row[i]])));
+  // older files stored one row per satellite
+  if (data.satellites) {
+    return data.satellites.map(row => Object.fromEntries(data.fields.map((key, i) => [key, row[i]])));
+  }
+  const base = Date.parse(data.generated);
+  const keys = Object.keys(data.columns);
+  return Array.from({ length: data.count }, (_, i) => {
+    const record = Object.fromEntries(keys.map(key => [key, data.columns[key][i]]));
+    record.EPOCH = new Date(base + record.EPOCH).toISOString().slice(0, -1);
+    return record;
+  });
+}
+
+function withZ(date) {
+  return date.endsWith('Z') ? date : `${date}Z`;
 }

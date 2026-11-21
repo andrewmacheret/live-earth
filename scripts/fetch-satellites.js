@@ -6,6 +6,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { fromCompact } from '../src/sats/catalog.js';
 import { downloadGroup } from '../src/sats/celestrak.js';
 import { refreshCatalog } from '../src/sats/refresh.js';
 
@@ -25,7 +26,7 @@ if (process.argv[2] === '--celestrak') {
   body = await response.text();
 }
 
-const count = JSON.parse(body).satellites.length;
+const count = fromCompact(JSON.parse(body)).length;
 if (count < 100) throw new Error(`Only got ${count} satellites, refusing to write`);
 await mkdir(dirname(OUT), { recursive: true });
 await writeFile(OUT, body);

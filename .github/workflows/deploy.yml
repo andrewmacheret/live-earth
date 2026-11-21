@@ -92,4 +92,4 @@ jobs:
       - name: Smoke test
         run: |
           curl -sSf "$SITE_URL/" | grep -q '<title>Live Earth</title>'
-          curl -sSf "$SITE_URL/data/satellites.json" | jq -e '.satellites | length > 1000'
+          curl -sSf "$SITE_URL/data/satellites.json" | jq -e '(.count // (.satellites | length)) > 1000'

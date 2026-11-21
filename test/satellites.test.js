@@ -21,12 +21,24 @@ test('parses CelesTrak CSV, including quoted names', () => {
 
 test('compact format round trips and drops duplicates', () => {
   const data = JSON.parse(JSON.stringify(toCompact(parseCsv(CSV), { generated: '2026-11-20T12:00:00Z' })));
-  assert.equal(data.satellites.length, 3);
+  assert.equal(data.count, 3);
   const records = fromCompact(data);
+  assert.equal(records.length, 3);
   assert.equal(records[0].OBJECT_NAME, 'ISS (ZARYA)');
   assert.equal(records[0].NORAD_CAT_ID, 25544);
   assert.equal(records[0].MEAN_MOTION, 15.49509114);
-  assert.equal(records[0].EPOCH, '2026-11-20T11:52:34.209696');
+  assert.equal(records[0].EPOCH, '2026-11-20T11:52:34.209');
+  assert.equal(records[1].EPOCH, '2026-11-20T11:06:15.038');
+});
+
+test('still reads the older row format', () => {
+  const old = {
+    fields: ['OBJECT_NAME', 'EPOCH', 'NORAD_CAT_ID'],
+    satellites: [['ISS (ZARYA)', '2026-11-20T11:52:34.209696', 25544]]
+  };
+  assert.deepEqual(fromCompact(old), [
+    { OBJECT_NAME: 'ISS (ZARYA)', EPOCH: '2026-11-20T11:52:34.209696', NORAD_CAT_ID: 25544 }
+  ]);
 });
 
 test('compact records can be propagated', () => {

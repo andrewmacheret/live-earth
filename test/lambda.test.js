@@ -76,7 +76,7 @@ test('the Lambda saves the merged catalog', async () => {
   });
   const result = await handler();
   assert.equal(result.fresh, GROUPS.length);
-  assert.equal(JSON.parse(saved).satellites.length, result.satellites);
+  assert.equal(JSON.parse(saved).count, result.satellites);
 });
 
 test('the Lambda keeps the old file when every group fails', async () => {
