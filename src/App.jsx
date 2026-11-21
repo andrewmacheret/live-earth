@@ -243,7 +243,10 @@ export default function App() {
               Back to live
             </button>
           )}
-          <span className="now">{formatTime(simTime)}</span>
+          <span className="now">
+            <span className="weekday">{formatWeekday(simTime)}, </span>
+            {formatTime(simTime)}
+          </span>
           <span className="offset">{live ? '' : offsetLabel(simTime - Date.now())}</span>
         </div>
         <div className="dial">
@@ -487,9 +490,12 @@ function launchOf(record) {
   return record && /^\d{4}-\d{3}/.exec(record.OBJECT_ID)?.[0];
 }
 
+function formatWeekday(ms) {
+  return new Date(ms).toLocaleString(undefined, { weekday: 'short' });
+}
+
 function formatTime(ms) {
   return new Date(ms).toLocaleString(undefined, {
-    weekday: 'short',
     month: 'short',
     day: 'numeric',
     hour: 'numeric',
@@ -506,7 +512,7 @@ function offsetLabel(ms) {
   if (minutes < 60) return `${sign}${minutes} min`;
   const hours = minutes / 60;
   if (hours < 48) return `${sign}${hours.toFixed(1)} h`;
-  return `${sign}${(hours / 24).toFixed(1)} days`;
+  return `${sign}${(hours / 24).toFixed(1)} d`;
 }
 
 function ageLabel(iso) {

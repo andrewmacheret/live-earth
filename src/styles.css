@@ -294,7 +294,7 @@ h1 {
 }
 
 .clock {
-  width: 380px;
+  width: 432px;
 }
 
 /* the badge and the offset have fixed widths so the time never moves */
@@ -310,14 +310,19 @@ h1 {
   background: rgba(255, 255, 255, 0.2);
 }
 
+/* on tiny screens cut the time off with ... instead of spilling out */
 .clock .now {
   flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .clock .offset {
   flex: none;
-  width: 64px;
+  width: 56px;
+  white-space: nowrap;
   color: var(--muted);
   font-size: 13px;
   text-align: right;
@@ -647,8 +652,12 @@ h1 {
   }
 
   .clock .offset {
-    width: 52px;
+    width: 48px;
     font-size: 12px;
+  }
+
+  .clock .weekday {
+    display: none;
   }
 
   .info dl {
