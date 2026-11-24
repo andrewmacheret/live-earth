@@ -1,6 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { AU, BODIES, bodyFacts, geocentric, phaseName, sceneFrame } from '../src/space/bodies.js';
+import {
+  AU,
+  BODIES,
+  bodyFacts,
+  geocentric,
+  KM_PER_AU,
+  orbitPath,
+  phaseName,
+  PLANETS,
+  sceneFrame
+} from '../src/space/bodies.js';
 import { sunDirection } from '../src/sats/frames.js';
 
 const DATE = new Date('2026-11-24T22:00:00Z');
@@ -31,6 +41,22 @@ test('names the Moon phase', () => {
   assert.equal(phaseName(300), 'Waning crescent');
   // late November 2026 has a full moon
   assert.equal(bodyFacts('moon', DATE).phase, 'Full moon');
+});
+
+test('the planets are about as far from the Sun as they should be', () => {
+  const au = facts => facts.fromSunKm / KM_PER_AU;
+  assert.ok(au(bodyFacts('mercury', DATE)) > 0.3 && au(bodyFacts('mercury', DATE)) < 0.47);
+  assert.ok(au(bodyFacts('jupiter', DATE)) > 4.9 && au(bodyFacts('jupiter', DATE)) < 5.5);
+  assert.ok(au(bodyFacts('neptune', DATE)) > 29.7 && au(bodyFacts('neptune', DATE)) < 30.4);
+  assert.ok(au(bodyFacts('pluto', DATE)) > 29.6 && au(bodyFacts('pluto', DATE)) < 49.4);
+});
+
+test("an orbit path goes once around and ends where it started", () => {
+  const path = orbitPath('mars', DATE, 90);
+  assert.equal(path.length, 91 * 3);
+  const gap = Math.hypot(path[0] - path[270], path[1] - path[271], path[2] - path[272]);
+  assert.ok(gap < 0.01, `ends ${gap} AU from the start`);
+  assert.equal(PLANETS.map(p => p.id).join(' '), 'mercury venus earth mars jupiter saturn uranus neptune pluto');
 });
 
 test('has a position for every body', () => {

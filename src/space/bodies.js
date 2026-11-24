@@ -33,10 +33,34 @@ export const BODIES = [
     periodDays: 27.32,
     dot: 4
   },
-  { id: 'earth', name: 'Earth', kind: 'Planet', radiusKm: 6371, color: '#7cb4ff', article: 'Earth', nasa: 'earth', periodDays: 365.26, dot: 5 }
+  planet('mercury', 'Mercury', 2439.7, 87.97, '#b8aa9c', { article: 'Mercury (planet)' }),
+  planet('venus', 'Venus', 6051.8, 224.7, '#e9d3a1', { texture: 'venus_atmosphere.jpg' }),
+  planet('earth', 'Earth', 6371, 365.26, '#7cb4ff', { texture: null }),
+  planet('mars', 'Mars', 3389.5, 686.98, '#e07a4f'),
+  planet('jupiter', 'Jupiter', 69911, 4332.59, '#d9b38c'),
+  planet('saturn', 'Saturn', 58232, 10759.22, '#e8d29b', { rings: { innerKm: 74500, outerKm: 140220 } }),
+  planet('uranus', 'Uranus', 25362, 30688.5, '#a9e3ea'),
+  planet('neptune', 'Neptune', 24622, 60195, '#6b8cf0'),
+  planet('pluto', 'Pluto', 1188.3, 90560, '#d8c2a6', {
+    kind: 'Dwarf planet',
+    texture: null,
+    nasa: 'dwarf-planets/pluto',
+    dot: 4
+  })
 ];
 
+function planet(id, name, radiusKm, periodDays, color, more = {}) {
+  return { id, name, kind: 'Planet', radiusKm, periodDays, color, texture: `${id}.jpg`, article: name, nasa: id, dot: 5, ...more };
+}
+
+// the bodies that go around the Sun, which get orbit lines
+export const PLANETS = BODIES.filter(body => body.periodDays && body.id !== 'moon');
+
 export const BODY_BY_ID = Object.fromEntries(BODIES.map(body => [body.id, body]));
+
+// straight up from the plane the planets orbit in, in J2000 coordinates
+const TILT = (23.4392911 * Math.PI) / 180;
+export const ECLIPTIC_NORTH = { x: 0, y: -Math.sin(TILT), z: Math.cos(TILT) };
 
 export function nasaLink(body) {
   return `https://science.nasa.gov/${body.nasa}/`;
@@ -54,6 +78,17 @@ export function sceneFrame(date) {
       out,
       i
     );
+}
+
+// One trip around the Sun, starting now, in AU from the Sun (J2000), as [x, y, z, x, y, z, ...].
+export function orbitPath(id, date, points) {
+  const out = new Float32Array((points + 1) * 3);
+  const { name, periodDays } = BODY_BY_ID[id];
+  for (let k = 0; k <= points; k++) {
+    const v = HelioVector(name, new Date(date.getTime() + (k / points) * periodDays * 86400000));
+    out.set([v.x, v.y, v.z], k * 3);
+  }
+  return out;
 }
 
 // Where every body is from the Earth's center, in AU (J2000), like { moon: { x, y, z }, ... }.

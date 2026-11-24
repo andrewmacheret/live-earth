@@ -31,8 +31,10 @@ export default function App() {
   const narrow = useMediaQuery('(max-width: 720px)');
   const [collapsed, setCollapsed] = useState(false);
   const tapEmptyRef = useRef(null);
-  // the body the camera is centered on
+  // the body the camera is centered on, and which Go to button is lit
   const [anchor, setAnchor] = useState('earth');
+  const [view, setView] = useState('earth');
+  useEffect(() => setView(v => (v === 'system' && anchor === 'sun' ? v : anchor)), [anchor]);
 
   useEffect(() => {
     const globe = new Globe(containerRef.current, {
@@ -322,13 +324,27 @@ export default function App() {
           {['earth', 'moon', 'sun'].map(id => (
             <button
               key={id}
-              aria-pressed={anchor === id}
-              onClick={() => (id === 'earth' ? globeRef.current.goTo('earth') : pickBody(id))}
+              aria-pressed={view === id}
+              onClick={() => {
+                setView(id);
+                if (id === 'earth') globeRef.current.goTo('earth');
+                else pickBody(id);
+              }}
             >
               <span className="swatch" style={{ background: BODY_BY_ID[id].color, color: BODY_BY_ID[id].color }} />
               {BODY_BY_ID[id].name}
             </button>
           ))}
+          <button
+            aria-pressed={view === 'system'}
+            onClick={() => {
+              setView('system');
+              globeRef.current.showSolarSystem();
+            }}
+          >
+            <span className="swatch system" aria-hidden="true" />
+            Solar system
+          </button>
         </nav>
       </header>
 
@@ -379,7 +395,7 @@ export default function App() {
             </button>
           )}
           <p className="hint">
-            Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot. Zoom out for the Moon and Sun.
+            Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot. Zoom out for the Moon and planets.
           </p>
         </section>
       )}
@@ -538,7 +554,7 @@ function Search({ records, wiki, favorites, planes, onPick, onPickPlane, onPickB
         ref={inputRef}
         type="search"
         value={query}
-        placeholder={planes.length ? 'Find a satellite or flight: ISS, Hubble, UAL…' : 'Find a satellite or the Moon: ISS, Hubble…'}
+        placeholder={planes.length ? 'Search: ISS, Hubble, Mars, UAL…' : 'Search: ISS, Hubble, Mars…'}
         onChange={event => {
           setQuery(event.target.value);
           setOpen(true);
@@ -550,7 +566,7 @@ function Search({ records, wiki, favorites, planes, onPick, onPickPlane, onPickB
           if (event.key === 'Enter' && list.length) pick(list[0]);
           if (event.key === 'Escape') inputRef.current.blur();
         }}
-        aria-label={planes.length ? 'Find a satellite or flight' : 'Find a satellite'}
+        aria-label={planes.length ? 'Find a satellite, planet or flight' : 'Find a satellite or planet'}
       />
       {open && list.length > 0 && (
         // keep the input focused while clicking, so the list doesn't close first

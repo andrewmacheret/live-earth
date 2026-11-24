@@ -4,7 +4,7 @@
 
 A 3D globe showing every active satellite where it is right now, using [React](https://react.dev/), [three.js](https://threejs.org/) and [satellite.js](https://github.com/shashwatak/satellite-js).
 
-Thousands of Starlinks, the ISS and everything else CelesTrak tracks move in real time over a globe with a real day and night side. Satellites in Earth's shadow are drawn dim. Click one to see its altitude, speed and orbit, then hit Ride along to follow it. The clock can run up to an hour per second.
+Thousands of Starlinks, the ISS and everything else CelesTrak tracks move in real time over a globe with a real day and night side. Satellites in Earth's shadow are drawn dim. Click one to see its altitude, speed and orbit, then hit Ride along to follow it. Zoom out, or use the Go to buttons, to visit the Moon, the Sun and the planets. The clock can run up to an hour per second.
 
 See it running at [andrewmacheret.com/projects/live-earth](https://andrewmacheret.com/projects/live-earth/).
 
@@ -13,7 +13,7 @@ See it running at [andrewmacheret.com/projects/live-earth](https://andrewmachere
 - Lambda `LiveEarth` (`lambda/handler.js`) runs once a day at 02:30 UTC from the EventBridge rule `LiveEarthRefresh`. It downloads the latest orbits for every active satellite from [CelesTrak](https://celestrak.org/) and writes them to `data/satellites.json` next to the page, cached for 5 minutes. CelesTrak only allows one download per IP every 2 hours and can be slow, so the page never calls it directly. Day-old orbits put satellites a few kilometres off, which you can't see on the globe, and the footer shows how old the data is.
 - A web worker (`src/sats/propagate.worker.js`) runs the SGP4 orbit model for every satellite about 20 times a second. Each frame moves the dots along their velocity in between.
 - The Earth spins under the orbits using sidereal time, and the sun position lights it, so the sunrise line and city lights are where they really are.
-- The Sun and Moon come from [Astronomy Engine](https://github.com/cosinekitty/astronomy), which works out their positions in the browser (`src/space/bodies.js`). Zooming out past the satellites shows the Moon's orbit, and the Moon shows its real phase. Scene units stay Earth radii all the way out, and the camera's near plane follows the zoom so far-away things still draw in the right order.
+- The Sun, Moon, planets and Pluto come from [Astronomy Engine](https://github.com/cosinekitty/astronomy), which works out their positions, tilts and spins in the browser (`src/space/bodies.js`). Zooming out past the satellites shows the Moon's orbit, then the planets' orbits, and the Moon shows its real phase. Scene units stay Earth radii all the way out, and the camera's near plane follows the zoom so far-away things still draw in the right order. Planet maps only download the first time a planet is big enough to see.
 
 ## Planes (parked)
 

@@ -4,7 +4,7 @@ import { degreesLat, degreesLong, eciToGeodetic, gstime, json2satrec, propagate 
 import { CATEGORIES } from '../sats/catalog.js';
 import { behindEarth, EARTH_RADIUS_KM, STRIDE, sunDirection, toScene } from '../sats/frames.js';
 import { flyPath, pathOf, toLatLon, trackAt } from '../planes/motion.js';
-import { BODY_BY_ID, bodyFacts } from '../space/bodies.js';
+import { AU, BODY_BY_ID, bodyFacts, ECLIPTIC_NORTH, sceneFrame } from '../space/bodies.js';
 import { createEarth } from './earth.js';
 import { createPlanePoints } from './planePoints.js';
 import { createSatellitePoints } from './satellitePoints.js';
@@ -289,6 +289,20 @@ export class Globe {
     this.controls.minDistance = 0;
     this.lastInfoAt = 0;
     this.callbacks.onAnchor?.(id);
+  }
+
+  // Fly out over the Sun until the inner planets fit, looking down on the plane they orbit in.
+  showSolarSystem() {
+    const { x, y, z } = ECLIPTIC_NORTH;
+    const north = new THREE.Vector3(...sceneFrame(new Date(this.simNow()))(x, y, z, [0, 0, 0], 0, 1));
+    this.goTo('sun', {
+      distance: 3.2 * AU,
+      // tipped toward the Earth, so it sits near the bottom of the view
+      direction: () => {
+        const toEarth = this.solar.positionOf('sun', new THREE.Vector3()).negate().normalize();
+        return toEarth.multiplyScalar(0.7).add(north).normalize();
+      }
+    });
   }
 
   // Select the Sun, the Moon or a planet by id, or pass null.

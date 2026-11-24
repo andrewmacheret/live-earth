@@ -119,8 +119,8 @@ h1 {
 .go-row button {
   display: flex;
   align-items: center;
-  gap: 7px;
-  padding: 5px 10px;
+  gap: 6px;
+  padding: 5px 8px;
   font-size: 13px;
   background: rgba(255, 255, 255, 0.06);
   border: 1px solid var(--border);
@@ -139,6 +139,11 @@ h1 {
 .go-row .swatch {
   width: 8px;
   height: 8px;
+}
+
+.go-row .swatch.system {
+  background: radial-gradient(circle, #ffc861 30%, transparent 32%);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5);
 }
 
 .body-swatch {

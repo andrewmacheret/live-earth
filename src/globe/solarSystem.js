@@ -1,13 +1,14 @@
 import * as THREE from 'three';
-import { BODIES, geocentric, sceneFrame, spinAxis } from '../space/bodies.js';
+import { AU, BODIES, geocentric, orbitPath, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
 
 const TEXTURES = import.meta.glob('../space/textures/*', { eager: true, query: '?url', import: 'default' });
 const MOON_ORBIT_POINTS = 256;
 const MOON_ORBIT_DAYS = 27.32;
+const PLANET_ORBIT_POINTS = 360;
 const DAY_MS = 86400000;
 // labels are skipped when they would cover a label for a body that matters more
-const LABEL_ORDER = ['sun', 'earth', 'moon'];
+const LABEL_ORDER = ['sun', 'earth', ...BODIES.map(body => body.id).filter(id => id !== 'sun' && id !== 'earth')];
 
 // Positions use the camera's view (modelViewMatrix), not world coordinates, because far-away
 // planets have huge world coordinates that the graphics card can't hold precisely.
@@ -72,6 +73,22 @@ const dotFragment = /* glsl */ `
   }
 `;
 
+// Saturn's rings, lit from the side the Sun is on
+const ringFragment = /* glsl */ `
+  uniform sampler2D map;
+  uniform float uHasMap;
+  uniform vec3 uColor;
+  uniform vec3 uSunView;
+  varying vec2 vUv;
+  varying vec3 vNormalView;
+  void main() {
+    vec4 ring = uHasMap > 0.5 ? texture2D(map, vUv) : vec4(uColor, 0.5);
+    float light = 0.25 + 0.75 * abs(dot(normalize(vNormalView), uSunView));
+    gl_FragColor = vec4(ring.rgb * light, ring.a);
+    #include <colorspace_fragment>
+  }
+`;
+
 const dotGeometry = new THREE.BufferGeometry().setAttribute(
   'position',
   new THREE.BufferAttribute(new Float32Array(3), 3)
@@ -89,7 +106,41 @@ function surface(body, radius) {
       uEmissive: { value: body.id === 'sun' ? 1 : 0 }
     }
   });
-  return new THREE.Mesh(new THREE.SphereGeometry(radius, 64, 32), material);
+  const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 64, 32), material);
+  if (body.rings) mesh.add(rings(body));
+  return mesh;
+}
+
+// a flat ring around the equator. The ring map runs from the inner edge to the outer one.
+function rings(body) {
+  const inner = body.rings.innerKm / EARTH_RADIUS_KM;
+  const outer = body.rings.outerKm / EARTH_RADIUS_KM;
+  const geometry = new THREE.RingGeometry(inner, outer, 128, 1);
+  const position = geometry.attributes.position;
+  const uv = geometry.attributes.uv;
+  for (let i = 0; i < position.count; i++) {
+    const r = Math.hypot(position.getX(i), position.getY(i));
+    uv.setXY(i, (r - inner) / (outer - inner), 0.5);
+  }
+  const ring = new THREE.Mesh(
+    geometry,
+    new THREE.ShaderMaterial({
+      vertexShader: surfaceVertex,
+      fragmentShader: ringFragment,
+      uniforms: {
+        map: { value: null },
+        uHasMap: { value: 0 },
+        uColor: { value: new THREE.Color(body.color) },
+        uSunView: { value: new THREE.Vector3(0, 0, 1) }
+      },
+      side: THREE.DoubleSide,
+      transparent: true,
+      depthWrite: false
+    })
+  );
+  // RingGeometry lies flat in x and y, but the equator is x and z
+  ring.rotation.x = -Math.PI / 2;
+  return ring;
 }
 
 function dot(body) {
@@ -151,9 +202,44 @@ export function createSolarSystem(container, { onPick }) {
     label.hidden = true;
     label.addEventListener('click', () => onPick?.(body.id));
     labelLayer.appendChild(label);
-    return { body, holder, mesh, glow, label, radius, screenPx: 0, textureRequested: false };
+    const ring = mesh?.children[0] ?? null;
+    return { body, holder, mesh, ring, glow, label, radius, screenPx: 0, textureRequested: false };
   });
   const byId = Object.fromEntries(items.map(item => [item.body.id, item]));
+
+  // Planet orbits are drawn around the Sun in AU, then this group moves, turns and scales them into
+  // the scene. Small numbers like AU keep them sharp on the graphics card.
+  const orbits = new THREE.Group();
+  orbits.matrixAutoUpdate = false;
+  orbits.visible = false;
+  group.add(orbits);
+  const orbitLines = PLANETS.map(body => {
+    const line = new THREE.Line(
+      new THREE.BufferGeometry(),
+      new THREE.LineBasicMaterial({
+        color: body.color,
+        transparent: true,
+        opacity: 0,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    line.frustumCulled = false;
+    orbits.add(line);
+    return { body, line };
+  });
+  let orbitsTime = null;
+
+  // the planets' paths drift slowly, so a fresh set every simulated month is plenty
+  function drawOrbits(now) {
+    orbitsTime = now;
+    for (const { body, line } of orbitLines) {
+      line.geometry.setAttribute(
+        'position',
+        new THREE.BufferAttribute(orbitPath(body.id, new Date(now), PLANET_ORBIT_POINTS), 3)
+      );
+    }
+  }
 
   const moonOrbit = new THREE.Line(
     new THREE.BufferGeometry().setAttribute(
@@ -183,21 +269,52 @@ export function createSolarSystem(container, { onPick }) {
     moonOrbit.geometry.attributes.position.needsUpdate = true;
   }
 
-  const loadTexture = item => {
-    item.textureRequested = true;
-    const url = TEXTURES[`../space/textures/${item.body.texture}`];
+  const loadInto = (name, mesh) => {
+    const url = TEXTURES[`../space/textures/${name}`];
     if (!url) return;
     loader.load(url, texture => {
       texture.colorSpace = THREE.SRGBColorSpace;
       texture.anisotropy = 8;
-      item.mesh.material.uniforms.map.value = texture;
-      item.mesh.material.uniforms.uHasMap.value = 1;
+      mesh.material.uniforms.map.value = texture;
+      mesh.material.uniforms.uHasMap.value = 1;
     });
+  };
+
+  // maps load the first time a body is big enough to see, so the page starts fast
+  const loadTexture = item => {
+    item.textureRequested = true;
+    if (item.body.texture) loadInto(item.body.texture, item.mesh);
+    if (item.ring) loadInto(`${item.body.id}_ring.png`, item.ring);
   };
 
   let positions = null;
   const point = new THREE.Vector3();
   const sunView = new THREE.Vector3();
+
+  // where each body is on screen, or null when it's behind the camera
+  const project = (camera, width, height) => {
+    for (const item of items) {
+      point.copy(item.holder.position).applyMatrix4(camera.matrixWorldInverse);
+      if (point.z >= 0) {
+        item.screen = null;
+        continue;
+      }
+      item.distance = -point.z;
+      point.copy(item.holder.position).project(camera);
+      item.screen = { x: (point.x + 1) * 0.5 * width, y: (1 - point.y) * 0.5 * height };
+    }
+  };
+
+  // true if a nearer body's disk covers this one, like Neptune behind Saturn
+  const hidden = item =>
+    items.some(
+      other =>
+        other !== item &&
+        other.screen &&
+        other.screenPx > 6 &&
+        other.distance < item.distance &&
+        Math.hypot(other.screen.x - item.screen.x, other.screen.y - item.screen.y) < other.screenPx / 2
+    );
 
   return {
     group,
@@ -236,6 +353,12 @@ export function createSolarSystem(container, { onPick }) {
         moonOrbitTime = now;
         drawMoonOrbit(now);
       }
+      const x = new THREE.Vector3(...frame(1, 0, 0, [0, 0, 0], 0, 1));
+      const y = new THREE.Vector3(...frame(0, 1, 0, [0, 0, 0], 0, 1));
+      const z = new THREE.Vector3(...frame(0, 0, 1, [0, 0, 0], 0, 1));
+      orbits.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU)).setPosition(byId.sun.holder.position);
+      orbits.matrixWorldNeedsUpdate = true;
+      if (orbits.visible && (orbitsTime == null || Math.abs(now - orbitsTime) > 30 * DAY_MS)) drawOrbits(now);
     },
 
     // Size the dots, light the surfaces and place the labels for this camera. Runs right before drawing.
@@ -258,32 +381,38 @@ export function createSolarSystem(container, { onPick }) {
           uniforms.uOpacity.value = 1 - THREE.MathUtils.smoothstep(item.screenPx, body.dot * 0.6, body.dot * 1.6);
         }
         if (mesh) {
-          mesh.visible = item.screenPx > 0.5;
+          // rings reach past the planet, so they count toward its size
+          mesh.visible = item.screenPx * (item.ring ? 2.4 : 1) > 0.5;
           if (mesh.visible && !item.textureRequested && item.screenPx > 4) loadTexture(item);
           if (body.id !== 'sun') {
             sunView.subVectors(sun, holder.position).transformDirection(camera.matrixWorldInverse);
             mesh.material.uniforms.uSunView.value.copy(sunView);
+            item.ring?.material.uniforms.uSunView.value.copy(sunView);
           }
         }
       }
 
-      // the Moon's orbit shows once you zoom out past the satellites
+      // the Moon's orbit shows once you zoom out past the satellites, and the planets' after that
       moonOrbit.material.opacity = 0.35 * THREE.MathUtils.smoothstep(earthDistance, 8, 30);
+      const orbitOpacity = 0.4 * THREE.MathUtils.smoothstep(earthDistance, 300, 3000);
+      orbits.visible = orbitOpacity > 0;
+      for (const { line } of orbitLines) line.material.opacity = orbitOpacity;
 
+      project(camera, width, height);
       const placed = [];
       for (const id of LABEL_ORDER) {
         const item = byId[id];
         const { label, holder } = item;
-        point.copy(holder.position).applyMatrix4(camera.matrixWorldInverse);
-        let show = point.z < 0 && item.screenPx < 0.3 * Math.min(width, height);
-        if (show && id === 'earth') show = earthDistance > 40;
+        let show = !!item.screen && item.screenPx < 0.3 * Math.min(width, height);
+        // close to the Earth the planets are just dots in the sky, so only the Sun and Moon get names
+        if (show && id !== 'sun' && id !== 'moon') show = earthDistance > 40;
         if (show && id !== 'earth') show = !behindEarth(camera.position, holder.position);
+        if (show) show = !hidden(item);
         let x = 0;
         let y = 0;
         if (show) {
-          point.copy(holder.position).project(camera);
-          x = (point.x + 1) * 0.5 * width + Math.max(3, item.screenPx / 2) + 4;
-          y = (1 - point.y) * 0.5 * height - 9;
+          x = item.screen.x + Math.max(3, item.screenPx / 2) + 4;
+          y = item.screen.y - 9;
           const box = { left: x, right: x + label.textContent.length * 7 + 10, top: y, bottom: y + 18 };
           show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
           if (show) placed.push(box);
@@ -297,15 +426,12 @@ export function createSolarSystem(container, { onPick }) {
     spots(camera, width, height) {
       const out = [];
       const earthDistance = camera.position.length();
+      project(camera, width, height);
       for (const item of items) {
-        if (item.body.id === 'earth' && earthDistance < 40) continue;
-        point.copy(item.holder.position).applyMatrix4(camera.matrixWorldInverse);
-        if (point.z >= 0) continue;
-        point.copy(item.holder.position).project(camera);
+        if (!item.screen || (item.body.id === 'earth' && earthDistance < 40) || hidden(item)) continue;
         out.push({
           id: item.body.id,
-          x: (point.x + 1) * 0.5 * width,
-          y: (1 - point.y) * 0.5 * height,
+          ...item.screen,
           radiusPx: item.screenPx / 2,
           position: item.holder.position
         });
