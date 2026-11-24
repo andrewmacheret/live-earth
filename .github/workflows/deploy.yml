@@ -45,7 +45,7 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # The Lambdas import ../src/sats, ../src/planes and ../src/space/smallBodies.js, so keep the folder layout.
+      # The Lambdas import ../src/sats, ../src/planes and two files from ../src/space, so keep the folder layout.
       # The SDK comes with the runtime.
       - name: Package Lambda
         run: |
@@ -53,7 +53,7 @@ jobs:
           cp lambda/*.js build/lambda/
           cp src/sats/*.js build/src/sats/
           cp src/planes/*.js build/src/planes/
-          cp src/space/smallBodies.js build/src/space/
+          cp src/space/smallBodies.js src/space/spacecraft.js build/src/space/
           echo '{"type":"module"}' > build/package.json
           (cd build && zip -qr ../lambda.zip .)
       - uses: aws-actions/configure-aws-credentials@v6
@@ -86,10 +86,11 @@ jobs:
             --distribution-id "${{ vars.CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths '/projects/live-earth/index.html' '/projects/live-earth/'
       # The schedule refreshes the data once a day. Only fill it in here if it's missing.
-      - name: Make sure satellite and asteroid data exists
+      - name: Make sure satellite, asteroid and spacecraft data exists
         run: |
           if ! curl -sf -o /dev/null "$SITE_URL/data/satellites.json" ||
-            ! curl -sf -o /dev/null "$SITE_URL/data/small-bodies.json"; then
+            ! curl -sf -o /dev/null "$SITE_URL/data/small-bodies.json" ||
+            ! curl -sf -o /dev/null "$SITE_URL/data/spacecraft.json"; then
             aws lambda invoke --function-name "$FUNCTION_NAME" --cli-read-timeout 660 refresh.json \
               --query FunctionError --output text | tee function-error.txt
             cat refresh.json
@@ -100,3 +101,4 @@ jobs:
           curl -sSf "$SITE_URL/" | grep -q '<title>Live Earth</title>'
           curl -sSf "$SITE_URL/data/satellites.json" | jq -e '(.count // (.satellites | length)) > 1000'
           curl -sSf "$SITE_URL/data/small-bodies.json" | jq -e '.count > 1000'
+          curl -sSf "$SITE_URL/data/spacecraft.json" | jq -e '.count >= 5'

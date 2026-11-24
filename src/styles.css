@@ -187,6 +187,11 @@ h1 {
   opacity: 0.85;
 }
 
+.body-label.craft-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+
 .search input {
   width: 100%;
   padding: 9px 12px;
@@ -568,6 +573,12 @@ h1 {
   margin: 0 0 12px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.info .note {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .info dl {

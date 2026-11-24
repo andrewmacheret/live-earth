@@ -1,9 +1,10 @@
 // Lambda LiveEarth. A schedule runs it once a day at 02:30 UTC. It downloads every active
-// satellite's orbit, plus asteroids and comets from JPL, and writes them to S3, which CloudFront serves to the page.
+// satellite's orbit, plus asteroids, comets and spacecraft from JPL, and writes them to S3, which CloudFront serves to the page.
 import { downloadGroup } from '../src/sats/celestrak.js';
 import { refreshCatalog } from '../src/sats/refresh.js';
 import { downloadWikiTitles, pickTitles } from '../src/sats/wiki.js';
 import { downloadSmallBodies, toCompactBodies } from '../src/space/smallBodies.js';
+import { downloadSpacecraft } from '../src/space/spacecraft.js';
 import { loadFromS3, saveToS3 } from './s3.js';
 
 // short browser cache, then CloudFront and browsers revalidate with the ETag
@@ -23,13 +24,29 @@ async function refreshSmallBodies({ downloadRocks, saveRocks, log }) {
   }
 }
 
+// Spacecraft are nice to have too. One missing spacecraft just gets left out, but most of them missing keeps the old file.
+async function refreshSpacecraft({ downloadCraft, saveCraft, log }) {
+  try {
+    const data = await downloadCraft({ log });
+    if (data.count < 5) throw new Error(`Only got ${data.count} spacecraft`);
+    await saveCraft(JSON.stringify(data));
+    log(`Saved ${data.count} spacecraft`);
+    return data.count;
+  } catch (err) {
+    log(`Kept old spacecraft: ${err.message}`);
+    return 0;
+  }
+}
+
 export function createHandler({
   download,
   downloadWiki = async () => ({}),
   downloadRocks,
+  downloadCraft,
   loadPrevious,
   save,
   saveRocks,
+  saveCraft,
   log = console.log
 }) {
   return async () => {
@@ -54,7 +71,8 @@ export function createHandler({
     await save(JSON.stringify(data));
     log(`Saved ${data.count} satellites, ${fresh} groups fresh, ${Object.keys(data.wiki).length} Wikipedia links`);
     const smallBodies = downloadRocks ? await refreshSmallBodies({ downloadRocks, saveRocks, log }) : 0;
-    return { satellites: data.count, fresh, failed, smallBodies };
+    const spacecraft = downloadCraft ? await refreshSpacecraft({ downloadCraft, saveCraft, log }) : 0;
+    return { satellites: data.count, fresh, failed, smallBodies, spacecraft };
   };
 }
 
@@ -64,5 +82,7 @@ export const handler = createHandler({
   downloadRocks: downloadSmallBodies,
   loadPrevious: loadFromS3,
   save: body => saveToS3(body, CACHE_CONTROL),
-  saveRocks: body => saveToS3(body, CACHE_CONTROL, process.env.KEY.replace(/[^/]*$/, 'small-bodies.json'))
+  downloadCraft: downloadSpacecraft,
+  saveRocks: body => saveToS3(body, CACHE_CONTROL, process.env.KEY.replace(/[^/]*$/, 'small-bodies.json')),
+  saveCraft: body => saveToS3(body, CACHE_CONTROL, process.env.KEY.replace(/[^/]*$/, 'spacecraft.json'))
 });

@@ -305,13 +305,13 @@ export class Globe {
     });
   }
 
-  // Select the Sun, the Moon, a planet or a rock (like 'rock:433') by id, or pass null.
+  // Select the Sun, the Moon, a planet, a rock (like 'rock:433') or a spacecraft (like 'craft:voyager-1') by id, or pass null.
   selectBody(id) {
     if (id && (this.selected >= 0 || this.selectedPlane)) this.select(-1);
     this.selectedBody = id;
     this.lastInfoAt = 0;
     this.marker.visible = !!id;
-    this.solar.selectRock(id);
+    this.solar.selectSmall(id);
     if (id) this.marker.material.uniforms.uColor.value.set(this.solar.colorOf(id));
     this.callbacks.onInfo?.(id ? this.bodyInfo(new Date(this.simNow())) : null);
   }
@@ -321,16 +321,26 @@ export class Globe {
     const anchored = this.anchor === id;
     const rock = this.solar.rockFacts(id, date);
     if (rock) return { type: 'rock', id, anchored, ...rock };
+    const craft = this.solar.craftFacts(id, date);
+    if (craft) return { type: 'craft', id, anchored, ...craft };
     return { type: 'body', id, anchored, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
   }
 
-  // Asteroids and comets load later, the first time you zoom out (see onZone)
+  // Asteroids, comets and spacecraft load later, the first time you zoom out (see onZone)
   setRocks(records) {
     this.solar.setRocks(records);
   }
 
   setRocksHidden(kinds) {
     this.solar.setRocksHidden(kinds);
+  }
+
+  setSpacecraft(list) {
+    this.solar.setSpacecraft(list);
+  }
+
+  setCraftsHidden(hide) {
+    this.solar.setCraftsHidden(hide);
   }
 
   updateBodySelection(date) {
@@ -394,7 +404,7 @@ export class Globe {
   selectPlane(icao) {
     if (icao && this.selected >= 0) this.select(-1);
     this.selectedBody = null;
-    this.solar.selectRock(null);
+    this.solar.selectSmall(null);
     this.selectedPlane = icao;
     this.planeAhead.visible = this.marker.visible = !!icao;
     if (icao) this.marker.material.uniforms.uColor.value.set('#ffffff');
@@ -454,7 +464,7 @@ export class Globe {
   select(index) {
     this.selectedPlane = null;
     this.selectedBody = null;
-    this.solar.selectRock(null);
+    this.solar.selectSmall(null);
     this.planeAhead.visible = false;
     this.selected = index;
     this.satrec = index >= 0 ? json2satrec(this.records[index]) : null;

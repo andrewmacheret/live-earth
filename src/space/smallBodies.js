@@ -252,17 +252,22 @@ export function pointAt(orbit, E, out = [0, 0, 0], k = 0) {
   return out;
 }
 
-// Solves Kepler's equation: how far around the ellipse it is on this Julian day
-export function eccentricAnomaly(orbit, jd) {
-  const { e } = orbit;
-  const M = (orbit.M0 + orbit.n * (jd - orbit.epoch)) % (2 * Math.PI);
+// Solves Kepler's equation for E, given the mean anomaly M (how far around it would be at an even speed)
+export function solveKepler(M, e) {
+  // starting at E = π only works for M between 0 and 2π, and dates before the epoch give negative M
+  M = ((M % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   let E = e < 0.8 ? M : Math.PI;
-  for (let step = 0; step < 30; step++) {
+  for (let step = 0; step < 50; step++) {
     const d = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
     E -= d;
-    if (Math.abs(d) < 1e-9) break;
+    if (Math.abs(d) < 1e-12) break;
   }
   return E;
+}
+
+// how far around the ellipse it is on this Julian day
+export function eccentricAnomaly(orbit, jd) {
+  return solveKepler(orbit.M0 + orbit.n * (jd - orbit.epoch), orbit.e);
 }
 
 export function positionAt(orbit, jd, out = [0, 0, 0], k = 0) {

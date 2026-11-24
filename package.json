@@ -15,7 +15,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "test": "node --test",
-    "fetch-data": "node scripts/fetch-satellites.js && node scripts/fetch-small-bodies.js"
+    "fetch-data": "node scripts/fetch-satellites.js && node scripts/fetch-small-bodies.js && node scripts/fetch-spacecraft.js"
   },
   "dependencies": {
     "astronomy-engine": "^2.1.19",

@@ -6,6 +6,7 @@ import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
 import { fromCompactPlanes } from './planes/compact.js';
 import { BODIES, BODY_BY_ID, nasaLink } from './space/bodies.js';
 import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodies.js';
+import { CRAFT_COLOR, fromCompactSpacecraft } from './space/spacecraft.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
@@ -36,9 +37,10 @@ export default function App() {
   const [anchor, setAnchor] = useState('earth');
   const [view, setView] = useState('earth');
   useEffect(() => setView(v => (v === 'system' && anchor === 'sun' ? v : anchor)), [anchor]);
-  // asteroids and comets are a big file, so they load the first time you zoom out or search
+  // asteroids, comets and spacecraft are big files, so they load the first time you zoom out or search
   const [rocks, setRocks] = useState(null);
-  const loadRocksRef = useRef(null);
+  const [crafts, setCrafts] = useState(null);
+  const loadSpaceRef = useRef(null);
   // the legend shows Earth things near the Earth and space things once you zoom out
   const [legendTab, setLegendTab] = useState('earth');
 
@@ -50,15 +52,24 @@ export default function App() {
       onAnchor: setAnchor,
       onZone: zone => {
         setLegendTab(zone);
-        if (zone === 'space') loadRocksRef.current?.();
+        if (zone === 'space') loadSpaceRef.current?.();
       }
     });
-    let rocksRequested = false;
-    loadRocksRef.current = () => {
-      if (rocksRequested) return;
-      rocksRequested = true;
-      fetch('data/small-bodies.json')
-        .then(response => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))))
+    let spaceRequested = false;
+    const getJson = url =>
+      fetch(url).then(response => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))));
+    // a link to a rock or spacecraft opens on it once it loads
+    const openLinked = prefix => {
+      const wanted = new URLSearchParams(location.search).get('body');
+      if (wanted?.startsWith(prefix) && globe.solar.has(wanted)) {
+        globe.selectBody(wanted);
+        globe.goTo(wanted);
+      }
+    };
+    loadSpaceRef.current = () => {
+      if (spaceRequested) return;
+      spaceRequested = true;
+      getJson('data/small-bodies.json')
         .then(data => {
           if (cancelled) return;
           const records = fromCompactBodies(data);
@@ -66,15 +77,19 @@ export default function App() {
           const counts = {};
           for (const record of records) counts[record.kind] = (counts[record.kind] || 0) + 1;
           setRocks({ records, counts, generated: data.generated });
-          // a link to a rock opens on it once the rocks load
-          const wanted = new URLSearchParams(location.search).get('body');
-          if (wanted?.startsWith('rock:') && globe.solar.has(wanted)) {
-            globe.selectBody(wanted);
-            globe.goTo(wanted);
-          }
+          openLinked('rock:');
         })
         // no rocks is fine, the rest still works
-        .catch(() => {});
+        .catch(() => setRocks(rocks => rocks ?? { records: [], counts: {}, failed: true }));
+      getJson('data/spacecraft.json')
+        .then(data => {
+          if (cancelled) return;
+          const list = fromCompactSpacecraft(data);
+          globe.setSpacecraft(list);
+          setCrafts({ list, generated: data.generated });
+          openLinked('craft:');
+        })
+        .catch(() => setCrafts(crafts => crafts ?? { list: [], failed: true }));
     };
     globeRef.current = globe;
     if (import.meta.env.DEV) window.globe = globe;
@@ -114,7 +129,7 @@ export default function App() {
           if (body.id !== 'earth') globe.goTo(body.id);
           return;
         }
-        if (start < 0 && params.get('body')?.startsWith('rock:')) return loadRocksRef.current();
+        if (start < 0 && /^(rock|craft):/.test(params.get('body'))) return loadSpaceRef.current();
         // a link to a plane opens on that plane once the planes load
         if (start < 0 && !params.get('plane')) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
         if (start >= 0) {
@@ -178,7 +193,8 @@ export default function App() {
 
   const isPlane = info?.type === 'plane';
   const isRock = info?.type === 'rock';
-  const bodyId = info?.type === 'body' || isRock ? info.id : null;
+  const isCraft = info?.type === 'craft';
+  const bodyId = info?.type === 'body' || isRock || isCraft ? info.id : null;
   const isSat = !!info && !info.type;
   const selectionKey = info ? (isPlane ? `plane ${info.icao}` : bodyId ? `body ${bodyId}` : `sat ${info.noradId}`) : null;
   // open the full panel again whenever something new is picked
@@ -200,7 +216,7 @@ export default function App() {
     return true;
   };
   const selectedRecord = isSat ? catalog?.records[info.index] : null;
-  const rockArticle = isRock ? info.article : null;
+  const rockArticle = isRock ? info.article : isCraft ? info.craft.article : null;
   const article = useMemo(() => {
     if (bodyId) {
       const title = BODY_BY_ID[bodyId]?.article ?? rockArticle;
@@ -257,10 +273,14 @@ export default function App() {
     // keep a plane from the link until the planes have loaded
     else if (planes) url.searchParams.delete('plane');
     if (bodyId) url.searchParams.set('body', bodyId);
-    // keep a rock from the link until the rocks have loaded
-    else if (rocks || !url.searchParams.get('body')?.startsWith('rock:')) url.searchParams.delete('body');
+    // keep a rock or spacecraft from the link until they've loaded
+    else {
+      const linked = url.searchParams.get('body') ?? '';
+      const waiting = (linked.startsWith('rock:') && !rocks) || (linked.startsWith('craft:') && !crafts);
+      if (!waiting) url.searchParams.delete('body');
+    }
     if (url.href !== location.href) history.replaceState(null, '', url);
-  }, [selectedId, selectedPlane, bodyId, catalog, planes, rocks]);
+  }, [selectedId, selectedPlane, bodyId, catalog, planes, rocks, crafts]);
 
   const changeSpeed = value => {
     const globe = globeRef.current;
@@ -277,6 +297,7 @@ export default function App() {
     setHidden(next);
     globeRef.current.setHidden(next);
     globeRef.current.setRocksHidden(new Set(KINDS.filter(kind => next.has(`rock:${kind.id}`)).map(kind => kind.id)));
+    globeRef.current.setCraftsHidden(next.has('craft'));
   };
 
   const toggleCategory = id => {
@@ -288,7 +309,7 @@ export default function App() {
 
   // Show all and Hide all only change the tab you're looking at
   const tabIds =
-    legendTab === 'space' ? KINDS.map(kind => `rock:${kind.id}`) : [...CATEGORIES.map(c => c.id), 'planes'];
+    legendTab === 'space' ? ['craft', ...KINDS.map(kind => `rock:${kind.id}`)] : [...CATEGORIES.map(c => c.id), 'planes'];
   const tabHidden = tabIds.some(id => hidden.has(id));
   const toggleAll = () => {
     const next = new Set(hidden);
@@ -362,10 +383,11 @@ export default function App() {
               favorites={favoriteIndices}
               planes={planes?.list ?? []}
               rocks={rocks?.records ?? []}
+              crafts={crafts?.list ?? []}
               onPick={pickAndFace}
               onPickPlane={pickPlane}
               onPickBody={pickBody}
-              onFocus={() => loadRocksRef.current?.()}
+              onFocus={() => loadSpaceRef.current?.()}
             />
             {Object.keys(catalog.withArticles).length > 0 && (
               <button className="surprise" onClick={surprise} title="Jump to a random satellite that has a Wikipedia article">
@@ -416,7 +438,18 @@ export default function App() {
           </div>
           {legendTab === 'space' && (
             <>
-              {!rocks && <p className="hint">Loading asteroids and comets…</p>}
+              {(!rocks || !crafts) && <p className="hint">Loading asteroids, comets and spacecraft…</p>}
+              {crafts?.list.length > 0 && (
+                <button
+                  className={hidden.has('craft') ? 'off' : ''}
+                  onClick={() => toggleCategory('craft')}
+                  aria-pressed={!hidden.has('craft')}
+                >
+                  <span className="swatch" style={{ background: CRAFT_COLOR }} />
+                  Spacecraft
+                  <span className="count">{number.format(crafts.list.length)}</span>
+                </button>
+              )}
               {rocks &&
                 KINDS.filter(kind => rocks.counts[kind.id]).map(kind => (
                   <button
@@ -548,7 +581,16 @@ export default function App() {
         />
       )}
 
-      {bodyId && !isRock && !showBar && (
+      {isCraft && !showBar && (
+        <CraftPanel
+          info={info}
+          summary={summary}
+          onGo={() => globeRef.current.goTo(info.anchored ? 'earth' : bodyId)}
+          onClose={closePanel}
+        />
+      )}
+
+      {bodyId && !isRock && !isCraft && !showBar && (
         <BodyPanel
           info={info}
           summary={summary}
@@ -588,11 +630,17 @@ export default function App() {
           </>
         )}{' '}
         · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a>
-        {rocks && (
+        {rocks?.generated && (
           <>
             {' '}
             · Asteroids and comets from <a href="https://ssd.jpl.nasa.gov/tools/sbdb_query.html">NASA JPL</a>, updated{' '}
             {ageLabel(rocks.generated)}
+          </>
+        )}
+        {crafts?.generated && (
+          <>
+            {' '}
+            · Spacecraft from <a href="https://ssd.jpl.nasa.gov/horizons/">JPL Horizons</a>
           </>
         )}{' '}
         · Earth textures from{' '}
@@ -605,7 +653,7 @@ export default function App() {
   );
 }
 
-function Search({ records, wiki, favorites, planes, rocks, onPick, onPickPlane, onPickBody, onFocus }) {
+function Search({ records, wiki, favorites, planes, rocks, crafts, onPick, onPickPlane, onPickBody, onFocus }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
@@ -623,6 +671,13 @@ function Search({ records, wiki, favorites, planes, rocks, onPick, onPickPlane, 
       type: 'body',
       id: body.id
     }));
+    // spacecraft like Voyager go right after the planets
+    crafts.forEach((craft, i) => {
+      const names = [craft.name, craft.short ?? ''].map(name => name.toUpperCase());
+      if (names.some(name => name && name.includes(q))) {
+        out.push({ rank: names.some(name => name && name.startsWith(q)) ? -0.9 : 0.4, type: 'craft', index: i });
+      }
+    });
     for (let i = 0; i < records.length && out.length < 50; i++) {
       const { OBJECT_NAME: name, NORAD_CAT_ID: id } = records[i];
       // the Wikipedia title helps when the catalog name is short, like HST for Hubble
@@ -651,7 +706,7 @@ function Search({ records, wiki, favorites, planes, rocks, onPick, onPickPlane, 
     }
     // names that start with what you typed go first
     return out.sort((a, b) => a.rank - b.rank).slice(0, 8);
-  }, [query, records, wiki, planes, rocks, rockNames]);
+  }, [query, records, wiki, planes, rocks, rockNames, crafts]);
 
   // with nothing typed, show your favorites instead
   const showingFavorites = !query.trim() && favorites.length > 0;
@@ -661,6 +716,7 @@ function Search({ records, wiki, favorites, planes, rocks, onPick, onPickPlane, 
     if (item.type === 'plane') onPickPlane(planes[item.index].icao);
     else if (item.type === 'body') onPickBody(item.id);
     else if (item.type === 'rock') onPickBody(`rock:${rocks[item.index].pdes}`);
+    else if (item.type === 'craft') onPickBody(`craft:${crafts[item.index].id}`);
     else onPick(item.index);
     setQuery('');
     inputRef.current.blur();
@@ -702,6 +758,16 @@ function Search({ records, wiki, favorites, planes, rocks, onPick, onPickPlane, 
                     {BODY_BY_ID[item.id].name}
                   </span>
                   <span className="count">{BODY_BY_ID[item.id].kind}</span>
+                </button>
+              </li>
+            ) : item.type === 'craft' ? (
+              <li key={`craft ${item.index}`}>
+                <button onClick={() => pick(item)}>
+                  <span>
+                    <span className="body-swatch" style={{ background: CRAFT_COLOR }} />
+                    {crafts[item.index].name}
+                  </span>
+                  <span className="count">Spacecraft</span>
                 </button>
               </li>
             ) : item.type === 'rock' ? (
@@ -925,18 +991,75 @@ function RockPanel({ info, summary, onGo, onClose }) {
   );
 }
 
+function CraftPanel({ info, summary, onGo, onClose }) {
+  const { craft } = info;
+  return (
+    <aside className="panel top-right info">
+      <button className="close" onClick={onClose} aria-label="Close">
+        ×
+      </button>
+      <div className="kind" style={{ color: CRAFT_COLOR }}>
+        Spacecraft
+      </div>
+      <h2>{craft.name}</h2>
+      <p className="ids">
+        {craft.agency} · launched {craft.launched}
+      </p>
+      {info.noData ? (
+        <p>JPL has no path for it on this date.</p>
+      ) : (
+        <dl>
+          <dt>From Earth</dt>
+          <dd>{formatDistance(info.fromEarthKm)}</dd>
+          <dt>From the Sun</dt>
+          <dd>{formatDistance(info.fromSunKm)}</dd>
+          <dt>Speed</dt>
+          <dd>
+            {info.speedKmS.toFixed(info.speedKmS < 10 ? 2 : 1)} km/s{' '}
+            <span className="muted">(compared to the {info.speedFrom})</span>
+          </dd>
+          <dt>Light time</dt>
+          <dd>{formatLightTime(info.lightSeconds)} to reach Earth</dd>
+        </dl>
+      )}
+      <p className="note">
+        {craft.note}
+        {info.guessed && <span className="muted"> Past JPL's data, so it's assumed to keep going straight.</span>}
+      </p>
+      <div className="actions">
+        <button className="follow" onClick={onGo}>
+          {info.anchored ? 'Back to Earth' : `Go to ${craft.short ?? craft.name}`}
+        </button>
+      </div>
+      <About summary={summary} links={craft.link ? [{ label: craft.agency.split(/,| and /)[0], href: craft.link }] : []} />
+    </aside>
+  );
+}
+
 // the shrunken info panel on phones. The selection and Ride along keep going underneath
 function SelectionBar({ info, onExpand, onClose }) {
   const isPlane = info.type === 'plane';
   const isRock = info.type === 'rock';
+  const isCraft = info.type === 'craft';
   const body = info.type === 'body' ? BODY_BY_ID[info.id] : null;
   const category = info.type ? null : CATEGORY_BY_ID[info.category];
   const name = isPlane ? info.callsign || info.icao.toUpperCase() : body ? titleName(body) : info.name;
-  const kind = isPlane ? (info.kind ?? 'Plane') : body ? body.kind : isRock ? info.kind.short : category.label;
+  const kind = isPlane
+    ? (info.kind ?? 'Plane')
+    : body
+      ? body.kind
+      : isRock
+        ? info.kind.short
+        : isCraft
+          ? 'Spacecraft'
+          : category.label;
   return (
     <aside className="panel top-right selection-bar">
       <button className="expand" onClick={onExpand} aria-expanded="false" aria-label={`Show details for ${name}`}>
-        <span className="kind" style={{ color: body?.color ?? (isRock ? info.kind.color : category?.color) ?? '#fff' }}>
+        <span
+          className="kind"
+          style={{ color: body?.color ?? (isRock ? info.kind.color : isCraft ? CRAFT_COLOR : category?.color) ?? '#fff' }}
+        >
           {kind}
           {info.following && <span className="muted"> · riding along</span>}
         </span>

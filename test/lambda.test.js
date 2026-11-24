@@ -148,6 +148,20 @@ test('the Lambda saves asteroids and comets, and a JPL problem only gets logged'
   assert.equal(rocks, undefined);
 });
 
+test('the Lambda saves spacecraft, and keeps the old file when most are missing', async () => {
+  let craft;
+  const options = { download: fakeCelesTrak, loadPrevious: async () => null, save: async () => {}, log: quiet };
+  const fakeCraft = count => async () => ({ count, spacecraft: [] });
+  const result = await createHandler({ ...options, downloadCraft: fakeCraft(13), saveCraft: async body => (craft = body) })();
+  assert.equal(result.spacecraft, 13);
+  assert.equal(JSON.parse(craft).count, 13);
+
+  craft = undefined;
+  const few = await createHandler({ ...options, downloadCraft: fakeCraft(2), saveCraft: async body => (craft = body) })();
+  assert.equal(few.spacecraft, 0);
+  assert.equal(craft, undefined);
+});
+
 test('the Lambda keeps the old file when every group fails', async () => {
   let saved = false;
   const handler = createHandler({

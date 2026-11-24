@@ -11,6 +11,7 @@ import {
   positionAt,
   sizeFromH
 } from '../space/smallBodies.js';
+import { CRAFT_COLOR, craftPath, craftPosition, craftSpeed } from '../space/spacecraft.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
 import { createRocks } from './rocks.js';
 
@@ -255,6 +256,49 @@ export function createSolarSystem(container, { onPick }) {
   const rockAt = (k, out) => rocks.at(k, out).applyMatrix4(orbits.matrix);
   let rockOpacity = 0;
 
+  // spacecraft, once they've loaded. Each is a dot with a name, moved every frame like a planet.
+  let crafts = [];
+  let craftById = new Map();
+  let craftsShown = true;
+  let craftOpacity = 0;
+  let selectedCraft = null;
+  const craftItem = id => (id?.startsWith('craft:') ? craftById.get(id.slice(6)) : undefined);
+  // Webb's path is saved from the Earth, so its line goes in a group turned like the scene but not moved
+  const geoFrame = new THREE.Group();
+  geoFrame.matrixAutoUpdate = false;
+  group.add(geoFrame);
+  const craftLine = new THREE.Line(
+    new THREE.BufferGeometry(),
+    new THREE.LineBasicMaterial({
+      color: CRAFT_COLOR,
+      transparent: true,
+      opacity: 0.55,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  craftLine.frustumCulled = false;
+  craftLine.visible = false;
+  let craftLineTime = null;
+
+  // the selected spacecraft's path. Parker's is an ellipse that starts where it is, like the planets'.
+  function drawCraftLine(item, jd) {
+    craftLineTime = jd;
+    const path = craftPath(item.craft, jd);
+    const attribute = craftLine.geometry.attributes.position;
+    if (attribute?.array.length === path.length) {
+      attribute.array.set(path);
+      attribute.needsUpdate = true;
+    } else {
+      craftLine.geometry.dispose();
+      craftLine.geometry = new THREE.BufferGeometry().setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array(path), 3)
+      );
+    }
+    (item.craft.center === 'earth' ? geoFrame : orbits).add(craftLine);
+  }
+
   // Each planet's line is the ellipse it's on right now, starting right at the planet, so the
   // planet always sits on a corner of the line instead of beside one of its straight pieces
   function drawOrbits(now) {
@@ -317,18 +361,17 @@ export function createSolarSystem(container, { onPick }) {
   const point = new THREE.Vector3();
   const sunView = new THREE.Vector3();
 
-  // where each body is on screen, or null when it's behind the camera
+  // where something is on screen, or null when it's behind the camera
+  const projectOne = (item, position, camera, width, height) => {
+    point.copy(position).applyMatrix4(camera.matrixWorldInverse);
+    if (point.z >= 0) return (item.screen = null);
+    item.distance = -point.z;
+    point.copy(position).project(camera);
+    return (item.screen = { x: (point.x + 1) * 0.5 * width, y: (1 - point.y) * 0.5 * height });
+  };
+
   const project = (camera, width, height) => {
-    for (const item of items) {
-      point.copy(item.holder.position).applyMatrix4(camera.matrixWorldInverse);
-      if (point.z >= 0) {
-        item.screen = null;
-        continue;
-      }
-      item.distance = -point.z;
-      point.copy(item.holder.position).project(camera);
-      item.screen = { x: (point.x + 1) * 0.5 * width, y: (1 - point.y) * 0.5 * height };
-    }
+    for (const item of items) projectOne(item, item.holder.position, camera, width, height);
   };
 
   // true if a nearer body's disk covers this one, like Neptune behind Saturn
@@ -345,40 +388,96 @@ export function createSolarSystem(container, { onPick }) {
   return {
     group,
 
-    // Ids are body ids like 'mars', or 'rock:' and a JPL designation like 'rock:433' or 'rock:1P'
+    // Ids are body ids like 'mars', 'rock:' and a JPL designation like 'rock:433' or 'rock:1P',
+    // or 'craft:' and a spacecraft id from spacecraft.js like 'craft:voyager-1'
     has(id) {
-      return !!byId[id] || rockIndex(id) >= 0;
+      return !!byId[id] || rockIndex(id) >= 0 || !!craftItem(id);
     },
 
     positionOf(id, out) {
       const k = rockIndex(id);
       if (k >= 0) return rockAt(k, out);
-      return out.copy(byId[id].holder.position);
+      return out.copy((craftItem(id) ?? byId[id]).holder.position);
     },
 
     radiusOf(id) {
       const k = rockIndex(id);
-      return k >= 0 ? rockRadius(rocks.records[k]) : byId[id].radius;
+      if (k >= 0) return rockRadius(rocks.records[k]);
+      // spacecraft are a few meters across, but the camera still needs room to stop
+      return craftItem(id) ? 0.001 : byId[id].radius;
     },
 
-    // how far away Go to stops: rocks are tiny, so back off enough to see the neighborhood
+    // how far away Go to stops: rocks and spacecraft are tiny, so back off enough to see the neighborhood.
+    // Webb stays near the Earth, so closer in for it.
     viewDistanceOf(id) {
+      const craft = craftItem(id)?.craft;
+      if (craft) return craft.center === 'earth' ? 0.004 * AU : 0.08 * AU;
       return rockIndex(id) >= 0 ? 0.08 * AU : byId[id].radius * 4;
     },
 
     // how wide the body looks on screen, in pixels
     screenPxOf(id) {
-      return rockIndex(id) >= 0 ? 0 : byId[id].screenPx;
+      return rockIndex(id) >= 0 || craftItem(id) ? 0 : byId[id].screenPx;
     },
 
     colorOf(id) {
       const k = rockIndex(id);
-      return k >= 0 ? KIND_BY_ID[rocks.records[k].kind].color : byId[id].body.color;
+      if (k >= 0) return KIND_BY_ID[rocks.records[k].kind].color;
+      return craftItem(id) ? CRAFT_COLOR : byId[id].body.color;
     },
 
     nameOf(id) {
       const k = rockIndex(id);
-      return k >= 0 ? rocks.records[k].name : byId[id].body.name;
+      if (k >= 0) return rocks.records[k].name;
+      return craftItem(id)?.craft.name ?? byId[id].body.name;
+    },
+
+    // list comes from fromCompactSpacecraft in spacecraft.js
+    setSpacecraft(list) {
+      crafts = list.map(craft => {
+        const holder = new THREE.Group();
+        const glow = dot({ id: 'craft', color: CRAFT_COLOR });
+        holder.add(glow);
+        group.add(holder);
+        const label = document.createElement('button');
+        label.className = 'body-label craft-label';
+        label.textContent = craft.short ?? craft.name;
+        label.style.color = CRAFT_COLOR;
+        label.hidden = true;
+        label.addEventListener('click', () => onPick?.(`craft:${craft.id}`));
+        labelLayer.appendChild(label);
+        return { craft, holder, glow, label, at: false, screen: null, distance: 0, screenPx: 0 };
+      });
+      craftById = new Map(crafts.map(item => [item.craft.id, item]));
+    },
+
+    setCraftsHidden(hide) {
+      craftsShown = !hide;
+    },
+
+    // Facts for the info panel about a spacecraft
+    craftFacts(id, date) {
+      const item = craftItem(id);
+      if (!item) return null;
+      const { craft } = item;
+      const jd = julianDay(date);
+      const p = craftPosition(craft, jd);
+      const base = { name: craft.name, craft };
+      if (!p) return { ...base, noData: true };
+      const sun = (positions ?? geocentric(date)).sun;
+      // from the Earth, and from the Sun, in AU
+      const geo = craft.center === 'earth' ? p : [p[0] + sun.x, p[1] + sun.y, p[2] + sun.z];
+      const helio = craft.center === 'earth' ? [p[0] - sun.x, p[1] - sun.y, p[2] - sun.z] : p;
+      const fromEarthKm = Math.hypot(...geo) * KM_PER_AU;
+      return {
+        ...base,
+        fromEarthKm,
+        fromSunKm: Math.hypot(...helio) * KM_PER_AU,
+        speedKmS: (craftSpeed(craft, jd) * KM_PER_AU) / 86400,
+        speedFrom: craft.center === 'earth' ? 'Earth' : 'Sun',
+        lightSeconds: fromEarthKm / 299792.458,
+        guessed: !craft.ellipse && (jd < craft.start || jd > craft.end)
+      };
     },
 
     setRocks(records) {
@@ -407,8 +506,12 @@ export function createSolarSystem(container, { onPick }) {
       rocks?.setHiddenKinds(kinds);
     },
 
-    selectRock(id) {
+    // highlight a rock's orbit or a spacecraft's path, or pass anything else to clear them
+    selectSmall(id) {
       rocks?.select(rockIndex(id));
+      selectedCraft = craftItem(id) ?? null;
+      craftLine.visible = !!selectedCraft;
+      craftLineTime = null;
     },
 
     // Facts for the info panel about a rock
@@ -477,9 +580,21 @@ export function createSolarSystem(container, { onPick }) {
       const z = new THREE.Vector3(...frame(0, 0, 1, [0, 0, 0], 0, 1));
       orbits.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU)).setPosition(byId.sun.holder.position);
       orbits.matrixWorldNeedsUpdate = true;
+      geoFrame.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU));
+      geoFrame.matrixWorldNeedsUpdate = true;
       if (now !== orbitsTime) drawOrbits(now);
       jd = julianDay(now);
       if (rocks && (rocks.group.visible || rocks.selected >= 0)) rocks.update(jd);
+      for (const item of crafts) {
+        item.at = !!craftPosition(item.craft, jd, v);
+        if (!item.at) continue;
+        item.holder.position.set(...frame(v[0], v[1], v[2], v));
+        if (item.craft.center !== 'earth') item.holder.position.add(byId.sun.holder.position);
+      }
+      // Parker's line starts where it is, so it moves with it. The other paths stay put.
+      if (selectedCraft && (craftLineTime == null || (selectedCraft.craft.ellipse && jd !== craftLineTime))) {
+        drawCraftLine(selectedCraft, jd);
+      }
     },
 
     // Size the dots, light the surfaces and place the labels for this camera. Runs right before drawing.
@@ -523,6 +638,15 @@ export function createSolarSystem(container, { onPick }) {
         if (rocksShown && rocks.selected >= 0) rockOpacity = Math.max(rockOpacity, 0.6);
         rocks.style(rockOpacity, pixelRatio);
       }
+      // spacecraft show up a little sooner than rocks, so Webb appears once you're past the Moon
+      craftOpacity = craftsShown ? THREE.MathUtils.smoothstep(earthDistance, 60, 300) : 0;
+      for (const item of crafts) {
+        // a picked spacecraft stays visible, even when the rest are hidden
+        item.opacity = item === selectedCraft ? Math.max(craftOpacity, 0.8) : craftOpacity;
+        item.holder.visible = item.at && item.opacity > 0;
+        item.glow.material.uniforms.uSize.value = 6 * pixelRatio;
+        item.glow.material.uniforms.uOpacity.value = item.opacity;
+      }
 
       project(camera, width, height);
       const placed = [];
@@ -540,6 +664,24 @@ export function createSolarSystem(container, { onPick }) {
           x = item.screen.x + Math.max(3, item.screenPx / 2) + 4;
           y = item.screen.y - 9;
           const box = { left: x, right: x + label.textContent.length * 7 + 10, top: y, bottom: y + 18 };
+          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+          if (show) placed.push(box);
+        }
+        if (label.hidden === show) label.hidden = !show;
+        if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      }
+
+      // then spacecraft
+      for (const item of crafts) {
+        const { label, holder } = item;
+        let show = holder.visible && item.opacity > 0.5 && !!projectOne(item, holder.position, camera, width, height);
+        if (show) show = !behindEarth(camera.position, holder.position) && !hidden(item);
+        let x = 0;
+        let y = 0;
+        if (show) {
+          x = item.screen.x + 7;
+          y = item.screen.y - 9;
+          const box = { left: x, right: x + label.textContent.length * 6.5 + 10, top: y, bottom: y + 18 };
           show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
           if (show) placed.push(box);
         }
@@ -589,6 +731,13 @@ export function createSolarSystem(container, { onPick }) {
           radiusPx: item.screenPx / 2,
           position: item.holder.position
         });
+      }
+      for (const item of crafts) {
+        if (!item.holder.visible || item.opacity < 0.3 || !projectOne(item, item.holder.position, camera, width, height)) {
+          continue;
+        }
+        if (hidden(item)) continue;
+        out.push({ id: `craft:${item.craft.id}`, ...item.screen, radiusPx: 0, position: item.holder.position });
       }
       return out;
     },

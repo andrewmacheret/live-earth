@@ -4,7 +4,7 @@
 
 A 3D globe showing every active satellite where it is right now, using [React](https://react.dev/), [three.js](https://threejs.org/) and [satellite.js](https://github.com/shashwatak/satellite-js).
 
-Thousands of Starlinks, the ISS and everything else CelesTrak tracks move in real time over a globe with a real day and night side. Satellites in Earth's shadow are drawn dim. Click one to see its altitude, speed and orbit, then hit Ride along to follow it. Zoom out, or use the Go to buttons, to visit the Moon, the Sun and the planets, then the asteroid belt, Jupiter's trojans, the Kuiper belt and famous comets like Halley's. The clock can run up to an hour per second.
+Thousands of Starlinks, the ISS and everything else CelesTrak tracks move in real time over a globe with a real day and night side. Satellites in Earth's shadow are drawn dim. Click one to see its altitude, speed and orbit, then hit Ride along to follow it. Zoom out, or use the Go to buttons, to visit the Moon, the Sun and the planets, then the asteroid belt, Jupiter's trojans, the Kuiper belt, famous comets like Halley's, and spacecraft like Voyager 1, Parker Solar Probe and Webb. The clock can run up to a year per second, forward or backward.
 
 See it running at [andrewmacheret.com/projects/live-earth](https://andrewmacheret.com/projects/live-earth/).
 
@@ -15,6 +15,7 @@ See it running at [andrewmacheret.com/projects/live-earth](https://andrewmachere
 - The Earth spins under the orbits using sidereal time, and the sun position lights it, so the sunrise line and city lights are where they really are.
 - The Sun, Moon, planets and Pluto come from [Astronomy Engine](https://github.com/cosinekitty/astronomy), which works out their positions, tilts and spins in the browser (`src/space/bodies.js`). Zooming out past the satellites shows the Moon's orbit, then the planets' orbits, and the Moon shows its real phase. Scene units stay Earth radii all the way out, and the camera's near plane follows the zoom so far-away things still draw in the right order. Planet maps only download the first time a planet is big enough to see.
 - About 19,000 asteroids, dwarf planets and comets come from NASA JPL's [Small-Body Database](https://ssd-api.jpl.nasa.gov/doc/sbdb_query.html): every asteroid brighter than magnitude 13, every potentially hazardous asteroid, and every numbered comet, plus Hale–Bopp and NEOWISE (`src/space/smallBodies.js`). JPL's API doesn't allow calls from web pages, so the same daily Lambda run saves them to `data/small-bodies.json`. A JPL problem only gets logged and leaves yesterday's file. The page downloads the file the first time you zoom out or search, then solves Kepler's equation for each rock a few times a second (`src/globe/rocks.js`).
+- 15 spacecraft, like the Voyagers, New Horizons, Parker Solar Probe, Webb, Europa Clipper and JUICE, come from NASA JPL's [Horizons](https://ssd.jpl.nasa.gov/horizons/) system (`src/space/spacecraft.js`). Horizons doesn't allow calls from web pages either, so the daily Lambda run saves a year either side of today to `data/spacecraft.json`. It asks for a position every 6 hours (every 30 minutes during flybys), then keeps only the ones the page needs to rebuild the rest within 500 km. The page fills in between with a cubic that matches both positions and speeds. Parker swings past the Sun too fast for that, so it's saved as one ellipse. Webb is saved from the Earth instead of the Sun, and the craft leaving the solar system keep going straight past the saved year.
 
 ## Planes (parked)
 
@@ -31,7 +32,7 @@ Built with [Vite](https://vite.dev/). Needs Node.js 24.
 ```bash
 npm install
 
-# copy the live site's orbit data into public/data/, and download asteroids and comets from JPL
+# copy the live site's orbit data into public/data/, and download asteroids, comets and spacecraft from JPL
 npm run fetch-data
 
 # or download the satellites from CelesTrak yourself (at most once every 2 hours)
