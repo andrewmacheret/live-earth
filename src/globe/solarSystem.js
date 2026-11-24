@@ -1,6 +1,7 @@
 import * as THREE from 'three';
-import { AU, BODIES, geocentric, KM_PER_AU, orbitPath, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
+import { AU, BODIES, geocentric, KM_PER_AU, planetOrbit, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
 import {
+  ellipsePath,
   jplLink,
   julianDay,
   KIND_BY_ID,
@@ -224,7 +225,10 @@ export function createSolarSystem(container, { onPick }) {
   group.add(orbits);
   const orbitLines = PLANETS.map(body => {
     const line = new THREE.Line(
-      new THREE.BufferGeometry(),
+      new THREE.BufferGeometry().setAttribute(
+        'position',
+        new THREE.BufferAttribute(new Float32Array((PLANET_ORBIT_POINTS + 1) * 3), 3)
+      ),
       new THREE.LineBasicMaterial({
         color: body.color,
         transparent: true,
@@ -234,7 +238,6 @@ export function createSolarSystem(container, { onPick }) {
       })
     );
     line.frustumCulled = false;
-    line.visible = false;
     orbits.add(line);
     return { body, line };
   });
@@ -250,14 +253,15 @@ export function createSolarSystem(container, { onPick }) {
   const rockAt = (k, out) => rocks.at(k, out).applyMatrix4(orbits.matrix);
   let rockOpacity = 0;
 
-  // the planets' paths drift slowly, so a fresh set every simulated month is plenty
+  // Each planet's line is the ellipse it's on right now, starting right at the planet, so the
+  // planet always sits on a corner of the line instead of beside one of its straight pieces
   function drawOrbits(now) {
     orbitsTime = now;
+    const date = new Date(now);
     for (const { body, line } of orbitLines) {
-      line.geometry.setAttribute(
-        'position',
-        new THREE.BufferAttribute(orbitPath(body.id, new Date(now), PLANET_ORBIT_POINTS), 3)
-      );
+      const orbit = planetOrbit(body.id, date);
+      ellipsePath(orbit, orbit.E, line.geometry.attributes.position.array, PLANET_ORBIT_POINTS);
+      line.geometry.attributes.position.needsUpdate = true;
     }
   }
 
@@ -467,7 +471,7 @@ export function createSolarSystem(container, { onPick }) {
       const z = new THREE.Vector3(...frame(0, 0, 1, [0, 0, 0], 0, 1));
       orbits.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU)).setPosition(byId.sun.holder.position);
       orbits.matrixWorldNeedsUpdate = true;
-      if (orbitLines[0].line.visible && (orbitsTime == null || Math.abs(now - orbitsTime) > 30 * DAY_MS)) drawOrbits(now);
+      if (now !== orbitsTime) drawOrbits(now);
       jd = julianDay(now);
       if (rocks && (rocks.group.visible || rocks.selected >= 0)) rocks.update(jd);
     },
@@ -503,13 +507,10 @@ export function createSolarSystem(container, { onPick }) {
         }
       }
 
-      // the Moon's orbit shows once you zoom out past the satellites, and the planets' after that
-      moonOrbit.material.opacity = 0.35 * THREE.MathUtils.smoothstep(earthDistance, 8, 30);
-      const orbitOpacity = 0.4 * THREE.MathUtils.smoothstep(earthDistance, 300, 3000);
-      for (const { line } of orbitLines) {
-        line.visible = orbitOpacity > 0;
-        line.material.opacity = orbitOpacity;
-      }
+      // orbits stay faint near the Earth, so they don't crowd the satellites, and brighten as you zoom out
+      moonOrbit.material.opacity = 0.2 + 0.15 * THREE.MathUtils.smoothstep(earthDistance, 8, 30);
+      const orbitOpacity = 0.2 + 0.2 * THREE.MathUtils.smoothstep(earthDistance, 300, 3000);
+      for (const { line } of orbitLines) line.material.opacity = orbitOpacity;
       if (rocks) {
         rockOpacity = rocksShown ? THREE.MathUtils.smoothstep(earthDistance, 150, 1500) : 0;
         // a picked rock stays visible even when it passes close to the Earth

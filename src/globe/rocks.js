@@ -1,7 +1,7 @@
 // Asteroids, dwarf planets and comets as dots. Everything here is in AU from the Sun (J2000),
 // and solarSystem.js moves the whole group into the scene, like the planets' orbit lines.
 import * as THREE from 'three';
-import { KIND_BY_ID, NOTABLE, orbitOf, pointAt, positionAt } from '../space/smallBodies.js';
+import { eccentricAnomaly, ellipsePath, KIND_BY_ID, NOTABLE, orbitOf, positionAt } from '../space/smallBodies.js';
 
 // solving 19,000 orbits takes a few milliseconds, so only do it a few times a second
 const UPDATE_MS = 250;
@@ -102,6 +102,12 @@ export function createRocks(records) {
       if (jd === solvedFor) return;
       // the selected and labeled rocks move every frame, so following them stays smooth
       for (const k of selected >= 0 ? [selected, ...notable] : notable) positionAt(orbits[k], jd, positions, k * 3);
+      // start the selected rock's line right at the rock, so it sits exactly on it
+      if (selected >= 0) {
+        const orbit = orbits[selected];
+        ellipsePath(orbit, eccentricAnomaly(orbit, jd), line.geometry.attributes.position.array, ORBIT_POINTS);
+        line.geometry.attributes.position.needsUpdate = true;
+      }
       // when time runs days per second, solve more often so they don't jump
       const since = performance.now() - solvedAt;
       if (since >= UPDATE_MS || (since >= FAST_UPDATE_MS && Math.abs(jd - fullFor) > 1)) {
@@ -126,9 +132,6 @@ export function createRocks(records) {
       selected = k;
       line.visible = k >= 0;
       if (k < 0) return;
-      const array = line.geometry.attributes.position.array;
-      for (let j = 0; j <= ORBIT_POINTS; j++) pointAt(orbits[k], (j / ORBIT_POINTS) * 2 * Math.PI, array, j * 3);
-      line.geometry.attributes.position.needsUpdate = true;
       line.material.color.set(KIND_BY_ID[records[k].kind].color);
       solvedFor = null;
     },

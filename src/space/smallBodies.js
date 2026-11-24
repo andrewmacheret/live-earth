@@ -240,7 +240,8 @@ export function pointAt(orbit, E, out = [0, 0, 0], k = 0) {
   return out;
 }
 
-export function positionAt(orbit, jd, out = [0, 0, 0], k = 0) {
+// Solves Kepler's equation: how far around the ellipse it is on this Julian day
+export function eccentricAnomaly(orbit, jd) {
   const { e } = orbit;
   const M = (orbit.M0 + orbit.n * (jd - orbit.epoch)) % (2 * Math.PI);
   let E = e < 0.8 ? M : Math.PI;
@@ -249,7 +250,39 @@ export function positionAt(orbit, jd, out = [0, 0, 0], k = 0) {
     E -= d;
     if (Math.abs(d) < 1e-9) break;
   }
-  return pointAt(orbit, E, out, k);
+  return E;
+}
+
+export function positionAt(orbit, jd, out = [0, 0, 0], k = 0) {
+  return pointAt(orbit, eccentricAnomaly(orbit, jd), out, k);
+}
+
+// One trip around the ellipse as [x, y, z, x, y, z, ...], starting and ending exactly at E.
+// Starting where the body is means it always sits right on the line.
+export function ellipsePath(orbit, E, out, points) {
+  for (let j = 0; j <= points; j++) pointAt(orbit, E + (j / points) * 2 * Math.PI, out, j * 3);
+  return out;
+}
+
+// The ellipse a body is on right now, from where it is and how fast it's going
+// (AU and AU per day from the Sun). E is where it is on that ellipse.
+export function orbitFromState({ x, y, z, vx, vy, vz }) {
+  const mu = GAUSS_K * GAUSS_K;
+  const r = Math.hypot(x, y, z);
+  const a = 1 / (2 / r - (vx * vx + vy * vy + vz * vz) / mu);
+  const h = [y * vz - z * vy, z * vx - x * vz, x * vy - y * vx];
+  const hLength = Math.hypot(...h);
+  // points from the Sun toward the closest point of the orbit, as long as the eccentricity
+  const ev = [
+    (vy * h[2] - vz * h[1]) / mu - x / r,
+    (vz * h[0] - vx * h[2]) / mu - y / r,
+    (vx * h[1] - vy * h[0]) / mu - z / r
+  ];
+  const e = Math.hypot(...ev);
+  const P = ev.map(c => c / e);
+  const Q = [h[1] * P[2] - h[2] * P[1], h[2] * P[0] - h[0] * P[2], h[0] * P[1] - h[1] * P[0]].map(c => c / hLength);
+  const E = Math.atan2((x * vx + y * vy + z * vz) / (e * Math.sqrt(mu * a)), (1 - r / a) / e);
+  return { e, a, b: a * Math.sqrt(1 - e * e), n: meanMotion(a), P, Q, E };
 }
 
 // Rough width in km from how bright it is, assuming it reflects 14% of sunlight like a typical asteroid

@@ -2,6 +2,7 @@
 import {
   Body,
   GeoMoon,
+  HelioState,
   HelioVector,
   Illumination,
   KM_PER_AU,
@@ -11,6 +12,7 @@ import {
   Rotation_EQJ_EQD
 } from 'astronomy-engine';
 import { EARTH_RADIUS_KM, toScene } from '../sats/frames.js';
+import { orbitFromState } from './smallBodies.js';
 
 // scene units (Earth radii) in one AU, the Earth's distance from the Sun
 export const AU = KM_PER_AU / EARTH_RADIUS_KM;
@@ -80,15 +82,9 @@ export function sceneFrame(date) {
     );
 }
 
-// One trip around the Sun, starting now, in AU from the Sun (J2000), as [x, y, z, x, y, z, ...].
-export function orbitPath(id, date, points) {
-  const out = new Float32Array((points + 1) * 3);
-  const { name, periodDays } = BODY_BY_ID[id];
-  for (let k = 0; k <= points; k++) {
-    const v = HelioVector(name, new Date(date.getTime() + (k / points) * periodDays * 86400000));
-    out.set([v.x, v.y, v.z], k * 3);
-  }
-  return out;
+// The ellipse a planet is on right now (see orbitFromState), in AU from the Sun (J2000)
+export function planetOrbit(id, date) {
+  return orbitFromState(HelioState(BODY_BY_ID[id].name, date));
 }
 
 // Where every body is from the Earth's center, in AU (J2000), like { moon: { x, y, z }, ... }.

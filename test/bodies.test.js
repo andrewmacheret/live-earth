@@ -6,12 +6,14 @@ import {
   bodyFacts,
   geocentric,
   KM_PER_AU,
-  orbitPath,
   phaseName,
+  planetOrbit,
   PLANETS,
   sceneFrame
 } from '../src/space/bodies.js';
+import { eccentricAnomaly, ellipsePath, pointAt } from '../src/space/smallBodies.js';
 import { sunDirection } from '../src/sats/frames.js';
+import { Body, HelioVector } from 'astronomy-engine';
 
 const DATE = new Date('2026-11-24T22:00:00Z');
 
@@ -51,11 +53,18 @@ test('the planets are about as far from the Sun as they should be', () => {
   assert.ok(au(bodyFacts('pluto', DATE)) > 29.6 && au(bodyFacts('pluto', DATE)) < 49.4);
 });
 
-test("an orbit path goes once around and ends where it started", () => {
-  const path = orbitPath('mars', DATE, 90);
-  assert.equal(path.length, 91 * 3);
-  const gap = Math.hypot(path[0] - path[270], path[1] - path[271], path[2] - path[272]);
-  assert.ok(gap < 0.01, `ends ${gap} AU from the start`);
+test('a planet sits exactly on its orbit line, which goes once around', () => {
+  const orbit = planetOrbit('mars', DATE);
+  assert.ok(Math.abs(orbit.a - 1.5237) < 0.01 && Math.abs(orbit.e - 0.0934) < 0.005);
+  const path = ellipsePath(orbit, orbit.E, new Float64Array(91 * 3), 90);
+  const mars = HelioVector(Body.Mars, DATE);
+  assert.ok(Math.hypot(path[0] - mars.x, path[1] - mars.y, path[2] - mars.z) < 1e-9);
+  assert.ok(Math.hypot(path[0] - path[270], path[1] - path[271], path[2] - path[272]) < 1e-9);
+  // a month later Mars is still within a few hundred km of that line
+  const later = HelioVector(Body.Mars, new Date(DATE.getTime() + 30 * 86400000));
+  const E = eccentricAnomaly({ ...orbit, M0: orbit.E - orbit.e * Math.sin(orbit.E), epoch: 0 }, 30);
+  const [x, y, z] = pointAt(orbit, E);
+  assert.ok(Math.hypot(x - later.x, y - later.y, z - later.z) * KM_PER_AU < 20000);
   assert.equal(PLANETS.map(p => p.id).join(' '), 'mercury venus earth mars jupiter saturn uranus neptune pluto');
 });
 
