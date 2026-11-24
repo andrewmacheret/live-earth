@@ -564,6 +564,49 @@ h1 {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.selection-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 6px;
+}
+
+.selection-bar .expand {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  padding: 4px 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+}
+
+.selection-bar .expand:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.selection-bar .kind {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.selection-bar .name {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selection-bar .close {
+  position: static;
+  flex: none;
+}
+
 .follow {
   width: 100%;
   padding: 9px;

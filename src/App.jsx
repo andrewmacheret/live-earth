@@ -26,9 +26,17 @@ export default function App() {
   const [favorites, setFavorites] = useState(loadFavorites);
   useEffect(() => saveFavorites(favorites), [favorites]);
   const [planes, setPlanes] = useState(null);
+  // on phones the info panel covers most of the screen, so closing it shrinks it to a bar instead
+  const narrow = useMediaQuery('(max-width: 720px)');
+  const [collapsed, setCollapsed] = useState(false);
+  const tapEmptyRef = useRef(null);
 
   useEffect(() => {
-    const globe = new Globe(containerRef.current, { onHover: setHover, onInfo: setInfo });
+    const globe = new Globe(containerRef.current, {
+      onHover: setHover,
+      onInfo: setInfo,
+      onTapEmpty: () => tapEmptyRef.current?.()
+    });
     globeRef.current = globe;
     if (import.meta.env.DEV) window.globe = globe;
     let cancelled = false;
@@ -123,6 +131,24 @@ export default function App() {
   }, [catalog]);
 
   const isPlane = info?.type === 'plane';
+  const selectionKey = info ? (isPlane ? `plane ${info.icao}` : `sat ${info.noradId}`) : null;
+  // open the full panel again whenever something new is picked
+  useEffect(() => setCollapsed(false), [selectionKey]);
+  const showBar = narrow && collapsed && !!info;
+  const closePanel = () => {
+    if (narrow) setCollapsed(true);
+    else deselect();
+  };
+  const deselect = () => {
+    if (isPlane) globeRef.current.selectPlane(null);
+    else globeRef.current.select(-1);
+  };
+  // tapping empty space on a phone shrinks the panel first, then deselects on the next tap
+  tapEmptyRef.current = () => {
+    if (!narrow || !info || collapsed) return false;
+    setCollapsed(true);
+    return true;
+  };
   const selectedRecord = info && !isPlane ? catalog?.records[info.index] : null;
   const article = useMemo(() => selectedRecord && articleFor(selectedRecord, catalog.wiki), [selectedRecord, catalog]);
   // undefined while loading, null when Wikipedia has nothing
@@ -369,9 +395,11 @@ export default function App() {
         </div>
       )}
 
-      {isPlane && <PlanePanel info={info} onClose={() => globeRef.current.selectPlane(null)} />}
+      {showBar && <SelectionBar info={info} onExpand={() => setCollapsed(false)} onClose={deselect} />}
 
-      {info && !isPlane && (
+      {isPlane && !showBar && <PlanePanel info={info} onClose={closePanel} />}
+
+      {info && !isPlane && !showBar && (
         <InfoPanel
           info={info}
           article={article}
@@ -382,7 +410,7 @@ export default function App() {
           showingLaunch={focus?.key === `launch ${selectedLaunch}`}
           onShowLaunch={showLaunch}
           onFollow={() => globeRef.current.setFollow(!info.following)}
-          onClose={() => globeRef.current.select(-1)}
+          onClose={closePanel}
         />
       )}
 
@@ -573,6 +601,39 @@ function InfoPanel(props) {
       <About article={article} summary={summary} noradId={info.noradId} />
     </aside>
   );
+}
+
+// the shrunken info panel on phones. The selection and Ride along keep going underneath
+function SelectionBar({ info, onExpand, onClose }) {
+  const isPlane = info.type === 'plane';
+  const category = isPlane ? null : CATEGORY_BY_ID[info.category];
+  const name = isPlane ? info.callsign || info.icao.toUpperCase() : info.name;
+  return (
+    <aside className="panel top-right selection-bar">
+      <button className="expand" onClick={onExpand} aria-expanded="false" aria-label={`Show details for ${name}`}>
+        <span className="kind" style={{ color: category?.color ?? '#fff' }}>
+          {isPlane ? (info.kind ?? 'Plane') : category.label}
+          {info.following && <span className="muted"> · riding along</span>}
+        </span>
+        <span className="name">{name}</span>
+      </button>
+      <button className="close" onClick={onClose} aria-label="Deselect" title="Deselect">
+        ×
+      </button>
+    </aside>
+  );
+}
+
+function useMediaQuery(query) {
+  const [matches, setMatches] = useState(() => matchMedia(query).matches);
+  useEffect(() => {
+    const list = matchMedia(query);
+    const update = () => setMatches(list.matches);
+    update();
+    list.addEventListener('change', update);
+    return () => list.removeEventListener('change', update);
+  }, [query]);
+  return matches;
 }
 
 function PlanePanel({ info, onClose }) {

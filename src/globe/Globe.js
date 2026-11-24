@@ -73,9 +73,9 @@ function drawOrbitLine(line, satrec, now) {
 }
 
 export class Globe {
-  constructor(container, { onHover, onSelect, onInfo }) {
+  constructor(container, { onHover, onSelect, onInfo, onTapEmpty }) {
     this.container = container;
-    this.callbacks = { onHover, onSelect, onInfo };
+    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty };
     this.clock = { realStart: Date.now(), simStart: Date.now(), speed: 1, version: 0 };
     this.records = [];
     this.categories = [];
@@ -667,6 +667,8 @@ export class Globe {
       const up = local(event);
       if (!this.downAt || Math.hypot(up.x - this.downAt.x, up.y - this.downAt.y) > 6) return;
       const hit = this.pick(up.x, up.y);
+      // the page can take an empty tap for itself, like to shrink the info panel on phones
+      if (!hit && (this.selected >= 0 || this.selectedPlane) && this.callbacks.onTapEmpty?.()) return;
       if (hit?.type === 'plane') this.selectPlane(this.planeList[hit.index].icao);
       else if (hit || this.selected >= 0 || this.selectedPlane) this.select(hit ? hit.index : -1);
     });
