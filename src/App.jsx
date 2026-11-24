@@ -483,8 +483,10 @@ export default function App() {
                 style={{ '--at': (notch.value + SLIDER_MAX) / (2 * SLIDER_MAX) }}
                 className={speedToSlider(speed) === notch.value ? 'on' : ''}
                 onClick={() => changeSpeed(sliderToSpeed(notch.value))}
+                aria-label={notch.label}
               >
-                {notch.label}
+                <span className="long">{notch.label}</span>
+                <span className="short">{notch.short}</span>
               </button>
             ))}
           </div>
@@ -1047,7 +1049,9 @@ function offsetLabel(ms) {
   if (minutes < 60) return `${sign}${minutes} min`;
   const hours = minutes / 60;
   if (hours < 48) return `${sign}${hours.toFixed(1)} h`;
-  return `${sign}${(hours / 24).toFixed(1)} d`;
+  const days = hours / 24;
+  if (days < 365) return `${sign}${days.toFixed(days < 100 ? 1 : 0)} d`;
+  return `${sign}${(days / 365.25).toFixed(1)} yr`;
 }
 
 function ageLabel(iso) {

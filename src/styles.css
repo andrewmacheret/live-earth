@@ -507,6 +507,10 @@ h1 {
   color: #e6edf7;
 }
 
+.notches .short {
+  display: none;
+}
+
 .speed-label {
   margin: 4px 0 0;
   color: var(--muted);
@@ -846,6 +850,14 @@ h1 {
 
   .clock .weekday {
     display: none;
+  }
+
+  .notches .long {
+    display: none;
+  }
+
+  .notches .short {
+    display: inline;
   }
 
   .info dl {

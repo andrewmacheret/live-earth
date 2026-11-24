@@ -5,6 +5,7 @@ import { KIND_BY_ID, NOTABLE, orbitOf, pointAt, positionAt } from '../space/smal
 
 // solving 19,000 orbits takes a few milliseconds, so only do it a few times a second
 const UPDATE_MS = 250;
+const FAST_UPDATE_MS = 50;
 const ORBIT_POINTS = 512;
 
 const SIZES = { dwarf: 5, comet: 2.6, hazardous: 1.8, neo: 2, main: 2 };
@@ -83,6 +84,7 @@ export function createRocks(records) {
 
   let solvedAt = -Infinity;
   let solvedFor = null;
+  let fullFor = 0;
   let selected = -1;
 
   return {
@@ -100,8 +102,11 @@ export function createRocks(records) {
       if (jd === solvedFor) return;
       // the selected and labeled rocks move every frame, so following them stays smooth
       for (const k of selected >= 0 ? [selected, ...notable] : notable) positionAt(orbits[k], jd, positions, k * 3);
-      if (performance.now() - solvedAt >= UPDATE_MS) {
+      // when time runs days per second, solve more often so they don't jump
+      const since = performance.now() - solvedAt;
+      if (since >= UPDATE_MS || (since >= FAST_UPDATE_MS && Math.abs(jd - fullFor) > 1)) {
         solvedAt = performance.now();
+        fullFor = jd;
         for (let k = 0; k < count; k++) positionAt(orbits[k], jd, positions, k * 3);
       }
       solvedFor = jd;
