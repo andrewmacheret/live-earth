@@ -1,8 +1,6 @@
 import * as THREE from 'three';
 import dayUrl from './textures/earth-day.jpg';
 import nightUrl from './textures/earth-night.jpg';
-import waterUrl from './textures/earth-water.jpg';
-
 const earthVertex = /* glsl */ `
   varying vec2 vUv;
   varying vec3 vNormal;
@@ -19,7 +17,6 @@ const earthVertex = /* glsl */ `
 const earthFragment = /* glsl */ `
   uniform sampler2D dayMap;
   uniform sampler2D nightMap;
-  uniform sampler2D waterMap;
   uniform vec3 sunDirection;
   varying vec2 vUv;
   varying vec3 vNormal;
@@ -39,11 +36,6 @@ const earthFragment = /* glsl */ `
     // city lights come on a little after sunset
     float lightsOn = 1.0 - smoothstep(-0.16, 0.0, sun);
     color += texture2D(nightMap, vUv).rgb * vec3(1.0, 0.8, 0.55) * 2.0 * lightsOn;
-
-    // sun glint on the oceans
-    float water = texture2D(waterMap, vUv).r;
-    float glint = pow(max(dot(reflect(-sunDirection, n), view), 0.0), 120.0);
-    color += vec3(1.0, 0.88, 0.7) * glint * water * max(sun, 0.0) * 0.55;
 
     // thin blue haze at the edge, brighter on the day side
     float edge = pow(1.0 - max(dot(n, view), 0.0), 4.0);
@@ -97,7 +89,6 @@ export function createEarth() {
       uniforms: {
         dayMap: { value: load(dayUrl, true) },
         nightMap: { value: load(nightUrl, true) },
-        waterMap: { value: load(waterUrl, false) },
         sunDirection
       }
     })

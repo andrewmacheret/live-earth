@@ -12,7 +12,7 @@ See it running at [andrewmacheret.com/projects/live-earth](https://andrewmachere
 
 - Lambda `LiveEarth` (`lambda/handler.js`) runs once a day at 02:30 UTC from the EventBridge rule `LiveEarthRefresh`. It downloads the latest orbits for every active satellite from [CelesTrak](https://celestrak.org/) and writes them to `data/satellites.json` next to the page, cached for 5 minutes. CelesTrak only allows one download per IP every 2 hours and can be slow, so the page never calls it directly. Day-old orbits put satellites a few kilometres off, which you can't see on the globe, and the footer shows how old the data is.
 - A web worker (`src/sats/propagate.worker.js`) runs the SGP4 orbit model for every satellite about 20 times a second. Each frame moves the dots along their velocity in between.
-- The Earth spins under the orbits using sidereal time, and the sun position lights it, so the sunrise line, city lights and ocean glint are where they really are.
+- The Earth spins under the orbits using sidereal time, and the sun position lights it, so the sunrise line and city lights are where they really are.
 
 ## Planes (parked)
 
