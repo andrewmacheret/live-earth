@@ -4,7 +4,7 @@ import { degreesLat, degreesLong, eciToGeodetic, gstime, json2satrec, propagate 
 import { CATEGORIES } from '../sats/catalog.js';
 import { behindEarth, EARTH_RADIUS_KM, STRIDE, sunDirection, toScene } from '../sats/frames.js';
 import { flyPath, pathOf, toLatLon, trackAt } from '../planes/motion.js';
-import { AU, BODY_BY_ID, bodyFacts, ECLIPTIC_NORTH, sceneFrame } from '../space/bodies.js';
+import { AU, bodyFacts, ECLIPTIC_NORTH, sceneFrame } from '../space/bodies.js';
 import { createEarth } from './earth.js';
 import { createPlanePoints } from './planePoints.js';
 import { createSatellitePoints } from './satellitePoints.js';
@@ -77,9 +77,9 @@ function drawOrbitLine(line, satrec, now) {
 }
 
 export class Globe {
-  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor }) {
+  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZoomOut }) {
     this.container = container;
-    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor };
+    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZoomOut };
     this.clock = { realStart: Date.now(), simStart: Date.now(), speed: 1, version: 0 };
     this.records = [];
     this.categories = [];
@@ -258,7 +258,7 @@ export class Globe {
   goTo(id, { distance, direction } = {}) {
     this.follow = false;
     const radius = this.solar.radiusOf(id);
-    const endDistance = distance ?? (id === 'earth' ? HOME_DISTANCE : radius * 4);
+    const endDistance = distance ?? (id === 'earth' ? HOME_DISTANCE : this.solar.viewDistanceOf(id));
     const startTarget = this.controls.target.clone();
     const startCamera = this.camera.position.clone();
     const startDistance = startCamera.distanceTo(startTarget);
@@ -305,19 +305,32 @@ export class Globe {
     });
   }
 
-  // Select the Sun, the Moon or a planet by id, or pass null.
+  // Select the Sun, the Moon, a planet or a rock (like 'rock:433') by id, or pass null.
   selectBody(id) {
     if (id && (this.selected >= 0 || this.selectedPlane)) this.select(-1);
     this.selectedBody = id;
     this.lastInfoAt = 0;
     this.marker.visible = !!id;
-    if (id) this.marker.material.uniforms.uColor.value.set(BODY_BY_ID[id].color);
+    this.solar.selectRock(id);
+    if (id) this.marker.material.uniforms.uColor.value.set(this.solar.colorOf(id));
     this.callbacks.onInfo?.(id ? this.bodyInfo(new Date(this.simNow())) : null);
   }
 
   bodyInfo(date) {
     const id = this.selectedBody;
-    return { type: 'body', id, anchored: this.anchor === id, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
+    const anchored = this.anchor === id;
+    const rock = this.solar.rockFacts(id, date);
+    if (rock) return { type: 'rock', id, anchored, ...rock };
+    return { type: 'body', id, anchored, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
+  }
+
+  // Asteroids and comets load later, the first time you zoom out (see onZoomOut)
+  setRocks(records) {
+    this.solar.setRocks(records);
+  }
+
+  setRocksShown(shown) {
+    this.solar.setRocksShown(shown);
   }
 
   updateBodySelection(date) {
@@ -381,6 +394,7 @@ export class Globe {
   selectPlane(icao) {
     if (icao && this.selected >= 0) this.select(-1);
     this.selectedBody = null;
+    this.solar.selectRock(null);
     this.selectedPlane = icao;
     this.planeAhead.visible = this.marker.visible = !!icao;
     if (icao) this.marker.material.uniforms.uColor.value.set('#ffffff');
@@ -440,6 +454,7 @@ export class Globe {
   select(index) {
     this.selectedPlane = null;
     this.selectedBody = null;
+    this.solar.selectRock(null);
     this.planeAhead.visible = false;
     this.selected = index;
     this.satrec = index >= 0 ? json2satrec(this.records[index]) : null;
@@ -622,6 +637,10 @@ export class Globe {
     this.solar.place(now);
     // satellites and planes fade out as you zoom out toward the planets
     this.fade = 1 - THREE.MathUtils.smoothstep(this.camera.position.length(), 15, 120);
+    if (!this.zoomedOut && this.camera.position.length() > 100) {
+      this.zoomedOut = true;
+      this.callbacks.onZoomOut?.();
+    }
     if (this.points) this.points.material.uniforms.uFade.value = this.fade;
     this.orbitGroup.visible = this.fade > 0.05;
     if (this.planePoints) this.updatePlanes(now);
@@ -771,6 +790,8 @@ export class Globe {
         candidates.push({ d2: big ? PICK_RADIUS_PX ** 2 * 0.9 : d * d, type: 'body', id: spot.id, position: spot.position });
       }
     }
+    const rock = this.solar.pickRock(x, y, this.camera, width, height, PICK_RADIUS_PX);
+    if (rock) candidates.push({ ...rock, type: 'body' });
     if (this.planesShown()) {
       // plane positions are in the Earth's frame, so fold the Earth's turn into the matrix
       e = viewProjection.clone().multiply(this.globe.earth.matrixWorld).elements;
@@ -801,7 +822,7 @@ export class Globe {
     if (!hit) return this.callbacks.onHover?.(null);
     const name =
       hit.type === 'body'
-        ? BODY_BY_ID[hit.id].name
+        ? this.solar.nameOf(hit.id)
         : hit.type === 'sat'
           ? this.records[hit.index].OBJECT_NAME
           : this.planeList[hit.index].callsign || this.planeList[hit.index].icao.toUpperCase();

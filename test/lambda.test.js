@@ -112,6 +112,42 @@ test('the Lambda adds Wikipedia links, and keeps the old ones if Wikidata fails'
   assert.deepEqual(saved.wiki, { 100000: 'Starlink' });
 });
 
+const fakeRocks = async () =>
+  Array.from({ length: 1200 }, (_, k) => ({
+    full_name: `(2026 A${k})`,
+    pdes: `2026 A${k}`,
+    kind: 'au',
+    class: 'MBA',
+    e: '0.1',
+    a: '2.5',
+    i: '5',
+    om: '10',
+    w: '20',
+    ma: '30',
+    epoch: '2461200.5',
+    H: '12'
+  }));
+
+test('the Lambda saves asteroids and comets, and a JPL problem only gets logged', async () => {
+  let rocks;
+  const options = { download: fakeCelesTrak, loadPrevious: async () => null, save: async () => {}, log: quiet };
+  const result = await createHandler({ ...options, downloadRocks: fakeRocks, saveRocks: async body => (rocks = body) })();
+  assert.equal(result.smallBodies, 1200);
+  assert.equal(JSON.parse(rocks).count, 1200);
+
+  rocks = undefined;
+  const failing = await createHandler({
+    ...options,
+    downloadRocks: async () => {
+      throw new Error('SBDB answered 503');
+    },
+    saveRocks: async body => (rocks = body)
+  })();
+  assert.equal(failing.smallBodies, 0);
+  assert.equal(failing.fresh, GROUPS.length);
+  assert.equal(rocks, undefined);
+});
+
 test('the Lambda keeps the old file when every group fails', async () => {
   let saved = false;
   const handler = createHandler({

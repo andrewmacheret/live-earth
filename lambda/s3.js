@@ -10,12 +10,12 @@ export async function loadFromS3() {
   return JSON.parse(await result.Body.transformToString());
 }
 
-export async function saveToS3(body, cacheControl) {
+export async function saveToS3(body, cacheControl, key = process.env.KEY) {
   const { sdk, client } = await s3();
   await client.send(
     new sdk.PutObjectCommand({
       Bucket: process.env.BUCKET,
-      Key: process.env.KEY,
+      Key: key,
       Body: body,
       ContentType: 'application/json',
       CacheControl: cacheControl

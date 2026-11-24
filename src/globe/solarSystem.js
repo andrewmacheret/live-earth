@@ -1,6 +1,16 @@
 import * as THREE from 'three';
-import { AU, BODIES, geocentric, orbitPath, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
+import { AU, BODIES, geocentric, KM_PER_AU, orbitPath, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
+import {
+  jplLink,
+  julianDay,
+  KIND_BY_ID,
+  NOTABLE,
+  periodDays,
+  positionAt,
+  sizeFromH
+} from '../space/smallBodies.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
+import { createRocks } from './rocks.js';
 
 const TEXTURES = import.meta.glob('../space/textures/*', { eager: true, query: '?url', import: 'default' });
 const MOON_ORBIT_POINTS = 256;
@@ -207,11 +217,10 @@ export function createSolarSystem(container, { onPick }) {
   });
   const byId = Object.fromEntries(items.map(item => [item.body.id, item]));
 
-  // Planet orbits are drawn around the Sun in AU, then this group moves, turns and scales them into
-  // the scene. Small numbers like AU keep them sharp on the graphics card.
+  // Planet orbits and the asteroids are drawn around the Sun in AU, then this group moves, turns and
+  // scales them into the scene. Small numbers like AU keep them sharp on the graphics card.
   const orbits = new THREE.Group();
   orbits.matrixAutoUpdate = false;
-  orbits.visible = false;
   group.add(orbits);
   const orbitLines = PLANETS.map(body => {
     const line = new THREE.Line(
@@ -225,10 +234,21 @@ export function createSolarSystem(container, { onPick }) {
       })
     );
     line.frustumCulled = false;
+    line.visible = false;
     orbits.add(line);
     return { body, line };
   });
   let orbitsTime = null;
+
+  // asteroids and comets, once they've loaded
+  let rocks = null;
+  let rocksShown = true;
+  let rockLabels = [];
+  let jd = julianDay(Date.now());
+  const rockIndex = id => (id?.startsWith('rock:') && rocks ? (rocks.index.get(id.slice(5)) ?? -1) : -1);
+  const rockRadius = record => (record.size ?? (record.H == null ? 5 : sizeFromH(record.H))) / 2 / EARTH_RADIUS_KM;
+  const rockAt = (k, out) => rocks.at(k, out).applyMatrix4(orbits.matrix);
+  let rockOpacity = 0;
 
   // the planets' paths drift slowly, so a fresh set every simulated month is plenty
   function drawOrbits(now) {
@@ -319,17 +339,106 @@ export function createSolarSystem(container, { onPick }) {
   return {
     group,
 
+    // Ids are body ids like 'mars', or 'rock:' and a JPL designation like 'rock:433' or 'rock:1P'
+    has(id) {
+      return !!byId[id] || rockIndex(id) >= 0;
+    },
+
     positionOf(id, out) {
+      const k = rockIndex(id);
+      if (k >= 0) return rockAt(k, out);
       return out.copy(byId[id].holder.position);
     },
 
     radiusOf(id) {
-      return byId[id].radius;
+      const k = rockIndex(id);
+      return k >= 0 ? rockRadius(rocks.records[k]) : byId[id].radius;
+    },
+
+    // how far away Go to stops: rocks are tiny, so back off enough to see the neighborhood
+    viewDistanceOf(id) {
+      return rockIndex(id) >= 0 ? 0.08 * AU : byId[id].radius * 4;
     },
 
     // how wide the body looks on screen, in pixels
     screenPxOf(id) {
-      return byId[id].screenPx;
+      return rockIndex(id) >= 0 ? 0 : byId[id].screenPx;
+    },
+
+    colorOf(id) {
+      const k = rockIndex(id);
+      return k >= 0 ? KIND_BY_ID[rocks.records[k].kind].color : byId[id].body.color;
+    },
+
+    nameOf(id) {
+      const k = rockIndex(id);
+      return k >= 0 ? rocks.records[k].name : byId[id].body.name;
+    },
+
+    setRocks(records) {
+      rocks = createRocks(records);
+      orbits.add(rocks.group);
+      rockLabels = rocks.notable.map(k => {
+        const record = rocks.records[k];
+        const label = document.createElement('button');
+        label.className = 'body-label rock-label';
+        // "433 Eros" reads better as "Eros" on the map
+        label.textContent = record.name.replace(/^\d+ /, '').replace(/^\d+P\//, '').replace(/^C\/\S+ \S+ \((.*)\)$/, '$1');
+        label.style.color = KIND_BY_ID[record.kind].color;
+        label.hidden = true;
+        label.addEventListener('click', () => onPick?.(`rock:${record.pdes}`));
+        labelLayer.appendChild(label);
+        return { k, label, position: new THREE.Vector3(), screen: null, distance: 0, screenPx: 0 };
+      });
+      rocks.update(jd);
+    },
+
+    setRocksShown(shown) {
+      rocksShown = shown;
+    },
+
+    selectRock(id) {
+      rocks?.select(rockIndex(id));
+    },
+
+    // Facts for the info panel about a rock
+    rockFacts(id, date) {
+      const k = rockIndex(id);
+      if (k < 0) return null;
+      const record = rocks.records[k];
+      const orbit = rocks.orbit(k);
+      const [x, y, z] = positionAt(orbit, julianDay(date));
+      const sun = (positions ?? geocentric(date)).sun;
+      const fromEarthKm = Math.hypot(x + sun.x, y + sun.y, z + sun.z) * KM_PER_AU;
+      // named rocks usually have a Wikipedia article under the same name, like "624 Hektor"
+      const named = /^\d+ \D/.test(record.name) || /^\d+[PD]\//.test(record.name);
+      return {
+        name: record.name,
+        pdes: record.pdes,
+        kind: KIND_BY_ID[record.kind],
+        article: NOTABLE[record.pdes] ?? (named ? record.name : null),
+        jpl: jplLink(record.pdes),
+        sizeKm: rockRadius(record) * 2 * EARTH_RADIUS_KM,
+        sizeKnown: record.size != null,
+        sizeGuessed: record.size == null && record.H != null,
+        periodDays: periodDays(orbit),
+        nearestAu: orbit.a * (1 - orbit.e),
+        farthestAu: orbit.a * (1 + orbit.e),
+        fromEarthKm,
+        fromSunKm: Math.hypot(x, y, z) * KM_PER_AU,
+        lightSeconds: fromEarthKm / 299792.458
+      };
+    },
+
+    // The closest rock under the pointer, like { d2, id, position }, or null
+    pickRock(x, y, camera, width, height, radius) {
+      if (!rocks || !rocksShown || rockOpacity < 0.3) return null;
+      const e = new THREE.Matrix4()
+        .multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse)
+        .multiply(orbits.matrix).elements;
+      const hit = rocks.pick(x, y, e, width, height, radius);
+      if (!hit) return null;
+      return { d2: hit.d2, id: `rock:${rocks.records[hit.k].pdes}`, position: rockAt(hit.k, new THREE.Vector3()) };
     },
 
     // the latest positions from Astronomy Engine, in AU from the Earth
@@ -358,7 +467,9 @@ export function createSolarSystem(container, { onPick }) {
       const z = new THREE.Vector3(...frame(0, 0, 1, [0, 0, 0], 0, 1));
       orbits.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU)).setPosition(byId.sun.holder.position);
       orbits.matrixWorldNeedsUpdate = true;
-      if (orbits.visible && (orbitsTime == null || Math.abs(now - orbitsTime) > 30 * DAY_MS)) drawOrbits(now);
+      if (orbitLines[0].line.visible && (orbitsTime == null || Math.abs(now - orbitsTime) > 30 * DAY_MS)) drawOrbits(now);
+      jd = julianDay(now);
+      if (rocks && (rocks.group.visible || rocks.selected >= 0)) rocks.update(jd);
     },
 
     // Size the dots, light the surfaces and place the labels for this camera. Runs right before drawing.
@@ -395,8 +506,16 @@ export function createSolarSystem(container, { onPick }) {
       // the Moon's orbit shows once you zoom out past the satellites, and the planets' after that
       moonOrbit.material.opacity = 0.35 * THREE.MathUtils.smoothstep(earthDistance, 8, 30);
       const orbitOpacity = 0.4 * THREE.MathUtils.smoothstep(earthDistance, 300, 3000);
-      orbits.visible = orbitOpacity > 0;
-      for (const { line } of orbitLines) line.material.opacity = orbitOpacity;
+      for (const { line } of orbitLines) {
+        line.visible = orbitOpacity > 0;
+        line.material.opacity = orbitOpacity;
+      }
+      if (rocks) {
+        rockOpacity = rocksShown ? THREE.MathUtils.smoothstep(earthDistance, 150, 1500) : 0;
+        // a picked rock stays visible even when it passes close to the Earth
+        if (rocksShown && rocks.selected >= 0) rockOpacity = Math.max(rockOpacity, 0.6);
+        rocks.style(rockOpacity, pixelRatio);
+      }
 
       project(camera, width, height);
       const placed = [];
@@ -414,6 +533,34 @@ export function createSolarSystem(container, { onPick }) {
           x = item.screen.x + Math.max(3, item.screenPx / 2) + 4;
           y = item.screen.y - 9;
           const box = { left: x, right: x + label.textContent.length * 7 + 10, top: y, bottom: y + 18 };
+          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+          if (show) placed.push(box);
+        }
+        if (label.hidden === show) label.hidden = !show;
+        if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      }
+
+      // famous rocks get names too, after the planets, once you're out among them
+      for (const item of rockLabels) {
+        const { label, position } = item;
+        let show = rockOpacity > 0.5;
+        if (show) {
+          rockAt(item.k, position);
+          point.copy(position).applyMatrix4(camera.matrixWorldInverse);
+          show = point.z < 0;
+          item.distance = -point.z;
+        }
+        let x = 0;
+        let y = 0;
+        if (show) {
+          point.copy(position).project(camera);
+          item.screen = { x: (point.x + 1) * 0.5 * width, y: (1 - point.y) * 0.5 * height };
+          show = !behindEarth(camera.position, position) && !hidden(item);
+        }
+        if (show) {
+          x = item.screen.x + 7;
+          y = item.screen.y - 9;
+          const box = { left: x, right: x + label.textContent.length * 6.5 + 10, top: y, bottom: y + 18 };
           show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
           if (show) placed.push(box);
         }
@@ -440,6 +587,7 @@ export function createSolarSystem(container, { onPick }) {
     },
 
     dispose() {
+      rocks?.dispose();
       labelLayer.remove();
     }
   };
