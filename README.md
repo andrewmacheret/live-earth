@@ -13,6 +13,7 @@ See it running at [andrewmacheret.com/projects/live-earth](https://andrewmachere
 - Lambda `LiveEarth` (`lambda/handler.js`) runs once a day at 02:30 UTC from the EventBridge rule `LiveEarthRefresh`. It downloads the latest orbits for every active satellite from [CelesTrak](https://celestrak.org/) and writes them to `data/satellites.json` next to the page, cached for 5 minutes. CelesTrak only allows one download per IP every 2 hours and can be slow, so the page never calls it directly. Day-old orbits put satellites a few kilometres off, which you can't see on the globe, and the footer shows how old the data is.
 - A web worker (`src/sats/propagate.worker.js`) runs the SGP4 orbit model for every satellite about 20 times a second. Each frame moves the dots along their velocity in between.
 - The Earth spins under the orbits using sidereal time, and the sun position lights it, so the sunrise line and city lights are where they really are.
+- The Sun and Moon come from [Astronomy Engine](https://github.com/cosinekitty/astronomy), which works out their positions in the browser (`src/space/bodies.js`). Zooming out past the satellites shows the Moon's orbit, and the Moon shows its real phase. Scene units stay Earth radii all the way out, and the camera's near plane follows the zoom so far-away things still draw in the right order.
 
 ## Planes (parked)
 
@@ -50,4 +51,4 @@ Pushes to `main` run the tests, update the `LiveEarth` Lambda, copy `dist/` to `
 
 The Lambda runs as IAM role `LiveEarth`, which can only write `projects/live-earth/data/*`. Its logs are in `/aws/lambda/LiveEarth`, kept for 14 days. It doesn't retry when it fails, so a CelesTrak outage just leaves the last good file in place until the next day's run. To refresh sooner, run `aws lambda invoke --function-name LiveEarth --cli-read-timeout 660 out.json --profile personal` (at most once every 2 hours, because of CelesTrak's limit).
 
-Earth textures are from the [three.js examples](https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets).
+Earth textures are from the [three.js examples](https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets). The Sun, Moon and planet textures are from [Solar System Scope](https://www.solarsystemscope.com/textures/) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)), shrunk to save download size.

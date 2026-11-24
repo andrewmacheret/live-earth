@@ -6,6 +6,7 @@ const vertexShader = /* glsl */ `
   attribute float aLit;
   attribute float aFocus;
   uniform float uPixelRatio;
+  uniform float uFade;
   varying vec3 vColor;
   varying float vLit;
   varying float vFocus;
@@ -13,9 +14,9 @@ const vertexShader = /* glsl */ `
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     gl_Position = projectionMatrix * mv;
     // hidden satellites have size 0, and ones the worker couldn't place have aLit < 0
-    float size = aLit < 0.0 ? 0.0 : aSize;
+    float size = aLit < 0.0 || uFade < 0.01 ? 0.0 : aSize;
     gl_PointSize = size * uPixelRatio * clamp(4.0 / -mv.z, 0.8, 2.6);
-    vColor = aColor;
+    vColor = aColor * uFade;
     vLit = aLit;
     vFocus = aFocus;
   }
@@ -59,7 +60,7 @@ export function createSatellitePoints(count) {
     new THREE.ShaderMaterial({
       vertexShader,
       fragmentShader,
-      uniforms: { uPixelRatio: { value: 1 } },
+      uniforms: { uPixelRatio: { value: 1 }, uFade: { value: 1 } },
       blending: THREE.AdditiveBlending,
       transparent: true,
       depthWrite: false

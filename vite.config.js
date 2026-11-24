@@ -17,6 +17,7 @@ export default defineConfig({
         codeSplitting: {
           groups: [
             { name: 'three', test: /node_modules[\\/]three[\\/]/ },
+            { name: 'astronomy', test: /node_modules[\\/]astronomy-engine[\\/]/ },
             { name: 'react', test: /node_modules[\\/](react|react-dom|scheduler)[\\/]/ }
           ]
         }

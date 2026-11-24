@@ -4,9 +4,11 @@ import { degreesLat, degreesLong, eciToGeodetic, gstime, json2satrec, propagate 
 import { CATEGORIES } from '../sats/catalog.js';
 import { behindEarth, EARTH_RADIUS_KM, STRIDE, sunDirection, toScene } from '../sats/frames.js';
 import { flyPath, pathOf, toLatLon, trackAt } from '../planes/motion.js';
+import { BODY_BY_ID, bodyFacts } from '../space/bodies.js';
 import { createEarth } from './earth.js';
 import { createPlanePoints } from './planePoints.js';
 import { createSatellitePoints } from './satellitePoints.js';
+import { createSolarSystem } from './solarSystem.js';
 import { createStars } from './stars.js';
 
 const SIZES = {
@@ -34,6 +36,8 @@ const PLANE_FADE_END_MS = 10 * 60000;
 // the line in front of a selected plane shows where it's headed over the next 10 minutes
 const PLANE_AHEAD_S = 600;
 const PLANE_AHEAD_POINTS = 32;
+const HOME_DISTANCE = 3.8;
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
 
 const markerVertex = /* glsl */ `
   uniform float uPixelRatio;
@@ -73,9 +77,9 @@ function drawOrbitLine(line, satrec, now) {
 }
 
 export class Globe {
-  constructor(container, { onHover, onSelect, onInfo, onTapEmpty }) {
+  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor }) {
     this.container = container;
-    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty };
+    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor };
     this.clock = { realStart: Date.now(), simStart: Date.now(), speed: 1, version: 0 };
     this.records = [];
     this.categories = [];
@@ -91,22 +95,31 @@ export class Globe {
     // plane times are seconds from here, so they fit in the graphics card's 32-bit numbers
     this.planeBase = Math.floor(Date.now() / 1000);
     this.selectedPlane = null;
+    this.selectedBody = null;
+    // the body the camera stays centered on, like 'moon'. The Earth is home.
+    this.anchor = 'earth';
+    this.fade = 1;
+    this.size = { width: 1, height: 1 };
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     container.appendChild(this.renderer.domElement);
 
     this.scene = new THREE.Scene();
-    this.camera = new THREE.PerspectiveCamera(45, 1, 0.005, 1000);
-    this.camera.position.set(0, 1.2, 3.8);
+    // the near plane follows the zoom (see frame), so far can reach past Pluto
+    this.camera = new THREE.PerspectiveCamera(45, 1, 0.005, 1e9);
+    this.camera.position.set(0, 1.2, HOME_DISTANCE);
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.enableDamping = true;
     this.controls.enablePan = false;
     this.controls.minDistance = 1.08;
-    this.controls.maxDistance = 40;
+    this.controls.maxDistance = 5e6;
 
     this.globe = createEarth();
-    this.scene.add(this.globe.earth, this.globe.glow, createStars());
+    this.stars = createStars();
+    this.stars.renderOrder = -1;
+    this.solar = createSolarSystem(container, { onPick: id => this.selectBody(id) });
+    this.scene.add(this.globe.earth, this.globe.glow, this.stars, this.solar.group);
 
     this.pixelRatio = { value: this.renderer.getPixelRatio() };
     this.marker = new THREE.Points(
@@ -218,11 +231,91 @@ export class Globe {
     this.worker.postMessage({ type: 'init', records });
     this.worker.postMessage({ type: 'clock', clock: this.clock });
 
-    // start with the sunrise line in view
+    if (this.anchor === 'earth') this.camera.position.copy(this.homeDirection()).multiplyScalar(HOME_DISTANCE);
+  }
+
+  // looking at the Earth with the sunrise line in view
+  homeDirection() {
     const view = new THREE.Vector3(...sunDirection(new Date(this.simNow())));
-    view.applyAxisAngle(new THREE.Vector3(0, 1, 0), 1.0);
+    view.applyAxisAngle(Y_AXIS, 1.0);
     view.y = 0.4;
-    this.camera.position.copy(view.normalize().multiplyScalar(3.8));
+    return view.normalize();
+  }
+
+  // A nice side to look at a body from: partly lit, and turned a little toward the Earth.
+  viewDirection(id) {
+    if (id === 'earth') return this.homeDirection();
+    const at = this.solar.positionOf(id, new THREE.Vector3());
+    const toEarth = at.clone().negate().normalize();
+    const up = new THREE.Vector3(0, 0.3, 0);
+    if (id === 'sun') return toEarth.add(up).normalize();
+    const toSun = this.solar.positionOf('sun', new THREE.Vector3()).sub(at).normalize();
+    return toSun.add(toEarth.multiplyScalar(0.7)).add(up).normalize();
+  }
+
+  // Fly to a body and keep it in the middle of the view from then on.
+  // direction and distance say where the camera ends up, looking back at the body.
+  goTo(id, { distance, direction } = {}) {
+    this.follow = false;
+    const radius = this.solar.radiusOf(id);
+    const endDistance = distance ?? (id === 'earth' ? HOME_DISTANCE : radius * 4);
+    const startTarget = this.controls.target.clone();
+    const startCamera = this.camera.position.clone();
+    const startDistance = startCamera.distanceTo(startTarget);
+    const startDir = startCamera.clone().sub(startTarget).normalize();
+    const travel = this.solar.positionOf(id, new THREE.Vector3()).distanceTo(startTarget);
+    const to = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    this.anchor = id;
+    this.anchorFrom = null;
+    this.fly(
+      k => {
+        this.solar.positionOf(id, to);
+        const endDir = direction ? direction() : this.viewDirection(id);
+        dir.copy(startDir).lerp(endDir, k);
+        if (dir.lengthSq() < 1e-6) dir.copy(endDir);
+        dir.normalize();
+        this.controls.target.lerpVectors(startTarget, to, k);
+        // zoom smoothly across huge distances, and rise up on long trips to see where we're going
+        const zoom = startDistance * Math.pow(endDistance / startDistance, k) + Math.sin(Math.PI * k) * travel * 0.5;
+        this.camera.position.copy(this.controls.target).addScaledVector(dir, zoom);
+      },
+      {
+        duration: FLY_MS + Math.min(1600, Math.log10(1 + travel) * 300),
+        done: () => (this.controls.minDistance = id === 'earth' ? 1.08 : radius * 1.15)
+      }
+    );
+    // let the camera pass close to things on the way, then stop it going inside the body
+    this.controls.minDistance = 0;
+    this.lastInfoAt = 0;
+    this.callbacks.onAnchor?.(id);
+  }
+
+  // Select the Sun, the Moon or a planet by id, or pass null.
+  selectBody(id) {
+    if (id && (this.selected >= 0 || this.selectedPlane)) this.select(-1);
+    this.selectedBody = id;
+    this.lastInfoAt = 0;
+    this.marker.visible = !!id;
+    if (id) this.marker.material.uniforms.uColor.value.set(BODY_BY_ID[id].color);
+    this.callbacks.onInfo?.(id ? this.bodyInfo(new Date(this.simNow())) : null);
+  }
+
+  bodyInfo(date) {
+    const id = this.selectedBody;
+    return { type: 'body', id, anchored: this.anchor === id, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
+  }
+
+  updateBodySelection(date) {
+    const at = this.solar.positionOf(this.selectedBody, new THREE.Vector3());
+    this.marker.geometry.attributes.position.array.set([at.x, at.y, at.z]);
+    this.marker.geometry.attributes.position.needsUpdate = true;
+    // the ring only helps while the body is a dot
+    this.marker.visible = this.solar.screenPxOf(this.selectedBody) < 24;
+    if (performance.now() - this.lastInfoAt > 200) {
+      this.lastInfoAt = performance.now();
+      this.callbacks.onInfo?.(this.bodyInfo(date));
+    }
   }
 
   // Load a fresh list of planes. Planes we already had slide from their old path to the new one.
@@ -273,6 +366,7 @@ export class Globe {
   // Select a plane by its ICAO address, or pass null. Satellites and planes can't both be selected.
   selectPlane(icao) {
     if (icao && this.selected >= 0) this.select(-1);
+    this.selectedBody = null;
     this.selectedPlane = icao;
     this.planeAhead.visible = this.marker.visible = !!icao;
     if (icao) this.marker.material.uniforms.uColor.value.set('#ffffff');
@@ -293,6 +387,7 @@ export class Globe {
     const i = this.selectedPlaneIndex();
     if (i < 0) return;
     const to = this.globe.earth.localToWorld(new THREE.Vector3(...flyPath(this.planePaths[i], this.planeTime()))).normalize();
+    if (this.anchor !== 'earth') return this.goTo('earth', { distance: 1.6, direction: () => to });
     const from = this.camera.position.clone().normalize();
     const startDistance = this.camera.position.length();
     const endDistance = Math.min(startDistance, 1.6);
@@ -330,6 +425,7 @@ export class Globe {
 
   select(index) {
     this.selectedPlane = null;
+    this.selectedBody = null;
     this.planeAhead.visible = false;
     this.selected = index;
     this.satrec = index >= 0 ? json2satrec(this.records[index]) : null;
@@ -352,6 +448,11 @@ export class Globe {
     if (follow === this.follow) return;
     this.follow = follow && this.selected >= 0;
     if (this.follow) {
+      if (this.anchor !== 'earth') {
+        this.anchor = 'earth';
+        this.controls.minDistance = 1.08;
+        this.callbacks.onAnchor?.('earth');
+      }
       this.flyToSatellite();
     } else {
       const target = this.controls.target.clone();
@@ -375,6 +476,9 @@ export class Globe {
     // satellites far out, like the ones 36,000 km up, would end up behind the camera, so back away
     const satDistance = to.length() / EARTH_RADIUS_KM;
     to.normalize();
+    if (this.anchor !== 'earth') {
+      return this.goTo('earth', { distance: Math.max(HOME_DISTANCE, satDistance * 1.6), direction: () => to });
+    }
     const from = this.camera.position.clone().normalize();
     const startDistance = this.camera.position.length();
     const endDistance =
@@ -404,9 +508,10 @@ export class Globe {
     });
   }
 
-  // Runs update(progress, selectedSatellitePosition) every frame for FLY_MS, with easing.
-  fly(update) {
-    this.flight = { update, start: performance.now() };
+  // Runs update(progress, selectedSatellitePosition) every frame for duration ms, with easing.
+  fly(update, { duration = FLY_MS, done } = {}) {
+    this.flight?.done?.();
+    this.flight = { update, start: performance.now(), duration, done };
   }
 
   satellitePosition(out) {
@@ -456,7 +561,8 @@ export class Globe {
     const away = Math.abs(now - this.planeDataTime);
     uniforms.uTime.value = t;
     uniforms.uBlend.value = blend;
-    uniforms.uOpacity.value = 1 - THREE.MathUtils.clamp((away - PLANE_FADE_START_MS) / (PLANE_FADE_END_MS - PLANE_FADE_START_MS), 0, 1);
+    uniforms.uOpacity.value =
+      this.fade * (1 - THREE.MathUtils.clamp((away - PLANE_FADE_START_MS) / (PLANE_FADE_END_MS - PLANE_FADE_START_MS), 0, 1));
     if (!this.selectedPlane) return;
     const i = this.selectedPlaneIndex();
     // the plane landed or flew out of range since the last update
@@ -499,6 +605,11 @@ export class Globe {
     this.globe.earth.rotation.y = gstime(date);
     this.globe.earth.updateMatrixWorld();
     this.globe.setSun(sunDirection(date));
+    this.solar.place(now);
+    // satellites and planes fade out as you zoom out toward the planets
+    this.fade = 1 - THREE.MathUtils.smoothstep(this.camera.position.length(), 15, 120);
+    if (this.points) this.points.material.uniforms.uFade.value = this.fade;
+    this.orbitGroup.visible = this.fade > 0.05;
     if (this.planePoints) this.updatePlanes(now);
 
     if (this.latest) {
@@ -517,17 +628,29 @@ export class Globe {
     }
 
     const sat = this.selected >= 0 && this.latest ? this.satellitePosition(new THREE.Vector3()) : null;
+    const anchorAt = this.solar.positionOf(this.anchor, new THREE.Vector3());
     if (this.flight) {
-      const t = Math.min(1, (performance.now() - this.flight.start) / FLY_MS);
-      this.flight.update(ease(t), sat);
-      if (t >= 1) this.flight = null;
+      const { update, start, duration, done } = this.flight;
+      const t = Math.min(1, (performance.now() - start) / duration);
+      update(ease(t), sat);
+      if (t >= 1) {
+        this.flight = null;
+        done?.();
+      }
     } else if (this.follow && sat && this.followFrom) {
       const delta = sat.clone().sub(this.followFrom);
       this.camera.position.add(delta);
       this.controls.target.add(delta);
+    } else if (this.anchorFrom) {
+      // the Moon and planets move, so carry the camera along with the one we're looking at
+      const delta = anchorAt.clone().sub(this.anchorFrom);
+      this.camera.position.add(delta);
+      this.controls.target.add(delta);
     }
     this.followFrom = sat;
+    this.anchorFrom = anchorAt;
     if (sat) this.updateSelection(now, date, sat);
+    if (this.selectedBody) this.updateBodySelection(date);
     // orbits drift slowly, so redrawing every simulated hour is plenty
     if (this.groupOrbits.length && (this.groupOrbitsTime == null || Math.abs(now - this.groupOrbitsTime) > 3600000)) {
       this.groupOrbitsTime = now;
@@ -544,7 +667,19 @@ export class Globe {
     // spin slower when zoomed in close
     const distance = this.camera.position.distanceTo(this.controls.target);
     this.controls.rotateSpeed = Math.min(0.6, 0.08 + distance * 0.12);
+    // zoom faster when far out, so the planets are a few scrolls away and not hundreds
+    this.controls.zoomSpeed = 1 + THREE.MathUtils.clamp(Math.log10(distance / 40), 0, 2);
     this.controls.update();
+    // keep the near plane in step with the zoom, so planets millions of km away still draw in the right order
+    const near = THREE.MathUtils.clamp(this.camera.position.distanceTo(this.controls.target) * 0.001, 0.005, 10000);
+    if (Math.abs(near - this.camera.near) > this.camera.near * 0.05) {
+      this.camera.near = near;
+      this.camera.updateProjectionMatrix();
+    }
+    // the stars stay around the camera, between the near and far planes
+    this.stars.position.copy(this.camera.position);
+    this.stars.scale.setScalar(this.camera.near / 0.005);
+    this.solar.view(this.camera, this.size.width, this.size.height, this.renderer.getPixelRatio());
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -610,9 +745,17 @@ export class Globe {
     const positions = this.points.geometry.attributes.position.array;
     const lit = this.points.geometry.attributes.aLit.array;
     let e = viewProjection.elements;
-    for (let i = 0; i < this.records.length; i++) {
+    for (let i = 0; i < this.records.length && this.fade > 0.3; i++) {
       if (!this.shown[i] || lit[i] < 0) continue;
       consider(e, 'sat', i, positions[i * 3], positions[i * 3 + 1], positions[i * 3 + 2]);
+    }
+    for (const spot of this.solar.spots(this.camera, width, height)) {
+      const d = Math.hypot(spot.x - x, spot.y - y);
+      // a big Moon on screen can be clicked anywhere, but a satellite in front of it still wins
+      const big = spot.radiusPx > PICK_RADIUS_PX;
+      if (d < Math.max(PICK_RADIUS_PX, spot.radiusPx)) {
+        candidates.push({ d2: big ? PICK_RADIUS_PX ** 2 * 0.9 : d * d, type: 'body', id: spot.id, position: spot.position });
+      }
     }
     if (this.planesShown()) {
       // plane positions are in the Earth's frame, so fold the Earth's turn into the matrix
@@ -628,6 +771,10 @@ export class Globe {
     candidates.sort((a, b) => a.d2 - b.d2);
     const point = new THREE.Vector3();
     for (const candidate of candidates) {
+      if (candidate.type === 'body') {
+        if (candidate.id === 'earth' || !behindEarth(camera, candidate.position)) return candidate;
+        continue;
+      }
       if (candidate.type === 'sat') point.fromArray(positions, candidate.index * 3);
       else this.globe.earth.localToWorld(point.fromArray(flyPath(this.planePaths[candidate.index], this.planeTime())));
       if (!behindEarth(camera, point)) return candidate;
@@ -639,9 +786,11 @@ export class Globe {
     this.renderer.domElement.style.cursor = hit ? 'pointer' : '';
     if (!hit) return this.callbacks.onHover?.(null);
     const name =
-      hit.type === 'sat'
-        ? this.records[hit.index].OBJECT_NAME
-        : this.planeList[hit.index].callsign || this.planeList[hit.index].icao.toUpperCase();
+      hit.type === 'body'
+        ? BODY_BY_ID[hit.id].name
+        : hit.type === 'sat'
+          ? this.records[hit.index].OBJECT_NAME
+          : this.planeList[hit.index].callsign || this.planeList[hit.index].icao.toUpperCase();
     this.callbacks.onHover?.({ ...hit, name, x: this.pointer.x, y: this.pointer.y });
   }
 
@@ -668,15 +817,18 @@ export class Globe {
       if (!this.downAt || Math.hypot(up.x - this.downAt.x, up.y - this.downAt.y) > 6) return;
       const hit = this.pick(up.x, up.y);
       // the page can take an empty tap for itself, like to shrink the info panel on phones
-      if (!hit && (this.selected >= 0 || this.selectedPlane) && this.callbacks.onTapEmpty?.()) return;
+      const anything = this.selected >= 0 || this.selectedPlane || this.selectedBody;
+      if (!hit && anything && this.callbacks.onTapEmpty?.()) return;
       if (hit?.type === 'plane') this.selectPlane(this.planeList[hit.index].icao);
-      else if (hit || this.selected >= 0 || this.selectedPlane) this.select(hit ? hit.index : -1);
+      else if (hit?.type === 'body') this.selectBody(hit.id);
+      else if (hit || anything) this.select(hit ? hit.index : -1);
     });
   }
 
   resize() {
     const { clientWidth: width, clientHeight: height } = this.container;
     if (!width || !height) return;
+    this.size = { width, height };
     this.renderer.setSize(width, height);
     this.camera.aspect = width / height;
     // on tall phone screens, widen the view so the whole globe still fits side to side
@@ -689,6 +841,7 @@ export class Globe {
     this.renderer.setAnimationLoop(null);
     this.resizeObserver.disconnect();
     this.worker?.terminate();
+    this.solar.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();

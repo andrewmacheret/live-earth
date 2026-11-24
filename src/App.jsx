@@ -4,6 +4,7 @@ import { articleFor, fetchSummary, trackerLinks } from './sats/about.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
 import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
 import { fromCompactPlanes } from './planes/compact.js';
+import { BODIES, BODY_BY_ID, nasaLink } from './space/bodies.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
@@ -30,12 +31,15 @@ export default function App() {
   const narrow = useMediaQuery('(max-width: 720px)');
   const [collapsed, setCollapsed] = useState(false);
   const tapEmptyRef = useRef(null);
+  // the body the camera is centered on
+  const [anchor, setAnchor] = useState('earth');
 
   useEffect(() => {
     const globe = new Globe(containerRef.current, {
       onHover: setHover,
       onInfo: setInfo,
-      onTapEmpty: () => tapEmptyRef.current?.()
+      onTapEmpty: () => tapEmptyRef.current?.(),
+      onAnchor: setAnchor
     });
     globeRef.current = globe;
     if (import.meta.env.DEV) window.globe = globe;
@@ -68,7 +72,13 @@ export default function App() {
         setCatalog({ records, counts, launches, recent, wiki, withArticles, indexById, generated: data.generated });
         const params = new URLSearchParams(location.search);
         const wanted = Number(params.get('sat'));
+        const body = BODY_BY_ID[params.get('body')];
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
+        if (start < 0 && body) {
+          globe.selectBody(body.id);
+          if (body.id !== 'earth') globe.goTo(body.id);
+          return;
+        }
         // a link to a plane opens on that plane once the planes load
         if (start < 0 && !params.get('plane')) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
         if (start >= 0) {
@@ -131,7 +141,9 @@ export default function App() {
   }, [catalog]);
 
   const isPlane = info?.type === 'plane';
-  const selectionKey = info ? (isPlane ? `plane ${info.icao}` : `sat ${info.noradId}`) : null;
+  const bodyId = info?.type === 'body' ? info.id : null;
+  const isSat = !!info && !info.type;
+  const selectionKey = info ? (isPlane ? `plane ${info.icao}` : bodyId ? `body ${bodyId}` : `sat ${info.noradId}`) : null;
   // open the full panel again whenever something new is picked
   useEffect(() => setCollapsed(false), [selectionKey]);
   const showBar = narrow && collapsed && !!info;
@@ -141,6 +153,7 @@ export default function App() {
   };
   const deselect = () => {
     if (isPlane) globeRef.current.selectPlane(null);
+    else if (bodyId) globeRef.current.selectBody(null);
     else globeRef.current.select(-1);
   };
   // tapping empty space on a phone shrinks the panel first, then deselects on the next tap
@@ -149,8 +162,11 @@ export default function App() {
     setCollapsed(true);
     return true;
   };
-  const selectedRecord = info && !isPlane ? catalog?.records[info.index] : null;
-  const article = useMemo(() => selectedRecord && articleFor(selectedRecord, catalog.wiki), [selectedRecord, catalog]);
+  const selectedRecord = isSat ? catalog?.records[info.index] : null;
+  const article = useMemo(() => {
+    if (bodyId) return { title: BODY_BY_ID[bodyId].article, program: false };
+    return selectedRecord && articleFor(selectedRecord, catalog.wiki);
+  }, [selectedRecord, catalog, bodyId]);
   // undefined while loading, null when Wikipedia has nothing
   const [summary, setSummary] = useState(null);
   useEffect(() => {
@@ -166,6 +182,11 @@ export default function App() {
   const pickAndFace = index => {
     globeRef.current.select(index);
     globeRef.current.faceSelected();
+  };
+
+  const pickBody = id => {
+    globeRef.current.selectBody(id);
+    globeRef.current.goTo(id);
   };
 
   const pickPlane = icao => {
@@ -194,8 +215,10 @@ export default function App() {
     if (selectedPlane) url.searchParams.set('plane', selectedPlane);
     // keep a plane from the link until the planes have loaded
     else if (planes) url.searchParams.delete('plane');
+    if (bodyId) url.searchParams.set('body', bodyId);
+    else url.searchParams.delete('body');
     if (url.href !== location.href) history.replaceState(null, '', url);
-  }, [selectedId, selectedPlane, catalog, planes]);
+  }, [selectedId, selectedPlane, bodyId, catalog, planes]);
 
   const changeSpeed = value => {
     const globe = globeRef.current;
@@ -286,6 +309,7 @@ export default function App() {
               planes={planes?.list ?? []}
               onPick={pickAndFace}
               onPickPlane={pickPlane}
+              onPickBody={pickBody}
             />
             {Object.keys(catalog.withArticles).length > 0 && (
               <button className="surprise" onClick={surprise} title="Jump to a random satellite that has a Wikipedia article">
@@ -294,6 +318,18 @@ export default function App() {
             )}
           </div>
         )}
+        <nav className="go-row" aria-label="Go to">
+          {['earth', 'moon', 'sun'].map(id => (
+            <button
+              key={id}
+              aria-pressed={anchor === id}
+              onClick={() => (id === 'earth' ? globeRef.current.goTo('earth') : pickBody(id))}
+            >
+              <span className="swatch" style={{ background: BODY_BY_ID[id].color, color: BODY_BY_ID[id].color }} />
+              {BODY_BY_ID[id].name}
+            </button>
+          ))}
+        </nav>
       </header>
 
       {catalog && (
@@ -342,7 +378,9 @@ export default function App() {
               <span className="count">{number.format(catalog.recent.length)}</span>
             </button>
           )}
-          <p className="hint">Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot.</p>
+          <p className="hint">
+            Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot. Zoom out for the Moon and Sun.
+          </p>
         </section>
       )}
 
@@ -399,7 +437,16 @@ export default function App() {
 
       {isPlane && !showBar && <PlanePanel info={info} onClose={closePanel} />}
 
-      {info && !isPlane && !showBar && (
+      {bodyId && !showBar && (
+        <BodyPanel
+          info={info}
+          summary={summary}
+          onGo={() => globeRef.current.goTo(info.anchored ? 'earth' : bodyId)}
+          onClose={closePanel}
+        />
+      )}
+
+      {isSat && !showBar && (
         <InfoPanel
           info={info}
           article={article}
@@ -429,22 +476,29 @@ export default function App() {
             · Planes from <a href="https://opensky-network.org/">OpenSky Network</a>, updated {ageLabel(planes.generated)}
           </>
         )}{' '}
-        · Earth textures from{' '}
-        <a href="https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets">three.js</a> ·{' '}
+        · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a> · Earth textures from{' '}
+        <a href="https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets">three.js</a>, others from{' '}
+        <a href="https://www.solarsystemscope.com/textures/">Solar System Scope</a> (
+        <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) ·{' '}
         <a href="https://github.com/andrewmacheret/live-earth">Source</a>
       </footer>
     </>
   );
 }
 
-function Search({ records, wiki, favorites, planes, onPick, onPickPlane }) {
+function Search({ records, wiki, favorites, planes, onPick, onPickPlane, onPickBody }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
   const matches = useMemo(() => {
     const q = query.trim().toUpperCase();
     if (q.length < 2) return [];
-    const out = [];
+    // the Sun, Moon and planets go above any satellite
+    const out = BODIES.filter(body => body.name.toUpperCase().includes(q)).map(body => ({
+      rank: body.name.toUpperCase().startsWith(q) ? -2 : -1,
+      type: 'body',
+      id: body.id
+    }));
     for (let i = 0; i < records.length && out.length < 50; i++) {
       const { OBJECT_NAME: name, NORAD_CAT_ID: id } = records[i];
       // the Wikipedia title helps when the catalog name is short, like HST for Hubble
@@ -472,6 +526,7 @@ function Search({ records, wiki, favorites, planes, onPick, onPickPlane }) {
 
   const pick = item => {
     if (item.type === 'plane') onPickPlane(planes[item.index].icao);
+    else if (item.type === 'body') onPickBody(item.id);
     else onPick(item.index);
     setQuery('');
     inputRef.current.blur();
@@ -483,7 +538,7 @@ function Search({ records, wiki, favorites, planes, onPick, onPickPlane }) {
         ref={inputRef}
         type="search"
         value={query}
-        placeholder={planes.length ? 'Find a satellite or flight: ISS, Hubble, UAL…' : 'Find a satellite: ISS, Hubble, STARLINK-1008…'}
+        placeholder={planes.length ? 'Find a satellite or flight: ISS, Hubble, UAL…' : 'Find a satellite or the Moon: ISS, Hubble…'}
         onChange={event => {
           setQuery(event.target.value);
           setOpen(true);
@@ -502,7 +557,17 @@ function Search({ records, wiki, favorites, planes, onPick, onPickPlane }) {
         <ul onMouseDown={event => event.preventDefault()}>
           {showingFavorites && <li className="list-title">★ Favorites</li>}
           {list.map(item =>
-            item.type === 'plane' ? (
+            item.type === 'body' ? (
+              <li key={`body ${item.id}`}>
+                <button onClick={() => pick(item)}>
+                  <span>
+                    <span className="body-swatch" style={{ background: BODY_BY_ID[item.id].color }} />
+                    {BODY_BY_ID[item.id].name}
+                  </span>
+                  <span className="count">{BODY_BY_ID[item.id].kind}</span>
+                </button>
+              </li>
+            ) : item.type === 'plane' ? (
               <li key={`plane ${item.index}`}>
                 <button onClick={() => pick(item)}>
                   <span>
@@ -598,7 +663,68 @@ function InfoPanel(props) {
           </button>
         )}
       </div>
-      <About article={article} summary={summary} noradId={info.noradId} />
+      <About summary={summary} partOf={article?.program} links={trackerLinks(info.noradId)} />
+    </aside>
+  );
+}
+
+function BodyPanel({ info, summary, onGo, onClose }) {
+  const body = BODY_BY_ID[info.id];
+  const home = info.id === 'earth';
+  return (
+    <aside className="panel top-right info">
+      <button className="close" onClick={onClose} aria-label="Close">
+        ×
+      </button>
+      <div className="kind" style={{ color: body.color }}>
+        {body.kind}
+      </div>
+      <h2>{titleName(body)}</h2>
+      <p className="ids">{number.format(Math.round(body.radiusKm * 2))} km across</p>
+      <dl>
+        {!home && (
+          <>
+            <dt>From Earth</dt>
+            <dd>{formatDistance(info.fromEarthKm)}</dd>
+          </>
+        )}
+        {info.id !== 'sun' && (
+          <>
+            <dt>From the Sun</dt>
+            <dd>{formatDistance(info.fromSunKm)}</dd>
+          </>
+        )}
+        {!home && (
+          <>
+            <dt>Light time</dt>
+            <dd>{formatLightTime(info.lightSeconds)} to reach Earth</dd>
+          </>
+        )}
+        {info.phase && (
+          <>
+            <dt>Phase</dt>
+            <dd>
+              {info.phase} <span className="muted">({Math.round(info.lit * 100)}% lit)</span>
+            </dd>
+          </>
+        )}
+        {body.periodDays && (
+          <>
+            <dt>Orbit</dt>
+            <dd>
+              around the {info.id === 'moon' ? 'Earth' : 'Sun'} every {formatDays(body.periodDays)}
+            </dd>
+          </>
+        )}
+      </dl>
+      {!(home && info.anchored) && (
+        <div className="actions">
+          <button className="follow" onClick={onGo}>
+            {info.anchored ? 'Back to Earth' : home ? 'Go back to Earth' : `Go to ${theName(body)}`}
+          </button>
+        </div>
+      )}
+      <About summary={summary} links={[{ label: 'NASA', href: nasaLink(body) }]} />
     </aside>
   );
 }
@@ -606,13 +732,15 @@ function InfoPanel(props) {
 // the shrunken info panel on phones. The selection and Ride along keep going underneath
 function SelectionBar({ info, onExpand, onClose }) {
   const isPlane = info.type === 'plane';
-  const category = isPlane ? null : CATEGORY_BY_ID[info.category];
-  const name = isPlane ? info.callsign || info.icao.toUpperCase() : info.name;
+  const body = info.type === 'body' ? BODY_BY_ID[info.id] : null;
+  const category = info.type ? null : CATEGORY_BY_ID[info.category];
+  const name = isPlane ? info.callsign || info.icao.toUpperCase() : body ? titleName(body) : info.name;
+  const kind = isPlane ? (info.kind ?? 'Plane') : body ? body.kind : category.label;
   return (
     <aside className="panel top-right selection-bar">
       <button className="expand" onClick={onExpand} aria-expanded="false" aria-label={`Show details for ${name}`}>
-        <span className="kind" style={{ color: category?.color ?? '#fff' }}>
-          {isPlane ? (info.kind ?? 'Plane') : category.label}
+        <span className="kind" style={{ color: body?.color ?? category?.color ?? '#fff' }}>
+          {kind}
           {info.following && <span className="muted"> · riding along</span>}
         </span>
         <span className="name">{name}</span>
@@ -703,13 +831,13 @@ function compass(degrees) {
   ];
 }
 
-function About({ article, summary, noradId }) {
+function About({ summary, partOf, links }) {
   return (
     <section className="about">
       {summary === undefined && <p className="muted">Looking it up on Wikipedia…</p>}
       {summary && (
         <>
-          {article.program && <div className="about-kind">Part of {summary.title}</div>}
+          {partOf && <div className="about-kind">Part of {summary.title}</div>}
           <div className="about-body">
             {summary.image && <img src={summary.image} alt="" />}
             <div>
@@ -721,7 +849,7 @@ function About({ article, summary, noradId }) {
       )}
       <p className="about-links">
         {summary?.url && <a href={summary.url} target="_blank" rel="noreferrer">Wikipedia</a>}
-        {trackerLinks(noradId).map(link => (
+        {links.map(link => (
           <a key={link.label} href={link.href} target="_blank" rel="noreferrer">
             {link.label}
           </a>
@@ -774,6 +902,31 @@ function formatLatLon(lat, lon) {
   const ns = lat >= 0 ? 'N' : 'S';
   const ew = lon >= 0 ? 'E' : 'W';
   return `${Math.abs(lat).toFixed(2)}° ${ns}, ${Math.abs(lon).toFixed(2)}° ${ew}`;
+}
+
+// "the Moon", but just "Mars"
+function theName(body) {
+  return body.the ? `the ${body.name}` : body.name;
+}
+
+function titleName(body) {
+  return body.the ? `The ${body.name}` : body.name;
+}
+
+function formatDistance(km) {
+  if (km < 1e7) return `${number.format(Math.round(km))} km`;
+  return `${(km / 1e6).toFixed(km < 1e9 ? 1 : 0)} million km`;
+}
+
+function formatLightTime(seconds) {
+  if (seconds < 90) return `${seconds.toFixed(1)} seconds`;
+  if (seconds < 5400) return `${(seconds / 60).toFixed(1)} minutes`;
+  return `${(seconds / 3600).toFixed(1)} hours`;
+}
+
+function formatDays(days) {
+  if (days < 400) return `${days.toFixed(1)} days`;
+  return `${(days / 365.25).toFixed(days < 3650 ? 2 : 0)} years`;
 }
 
 function formatPeriod(minutes) {
