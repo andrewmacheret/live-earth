@@ -77,9 +77,9 @@ function drawOrbitLine(line, satrec, now) {
 }
 
 export class Globe {
-  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZoomOut }) {
+  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone }) {
     this.container = container;
-    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZoomOut };
+    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone };
     this.clock = { realStart: Date.now(), simStart: Date.now(), speed: 1, version: 0 };
     this.records = [];
     this.categories = [];
@@ -324,13 +324,13 @@ export class Globe {
     return { type: 'body', id, anchored, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
   }
 
-  // Asteroids and comets load later, the first time you zoom out (see onZoomOut)
+  // Asteroids and comets load later, the first time you zoom out (see onZone)
   setRocks(records) {
     this.solar.setRocks(records);
   }
 
-  setRocksShown(shown) {
-    this.solar.setRocksShown(shown);
+  setRocksHidden(kinds) {
+    this.solar.setRocksHidden(kinds);
   }
 
   updateBodySelection(date) {
@@ -637,9 +637,11 @@ export class Globe {
     this.solar.place(now);
     // satellites and planes fade out as you zoom out toward the planets
     this.fade = 1 - THREE.MathUtils.smoothstep(this.camera.position.length(), 15, 120);
-    if (!this.zoomedOut && this.camera.position.length() > 100) {
-      this.zoomedOut = true;
-      this.callbacks.onZoomOut?.();
+    // tell the page when the camera moves between the Earth's neighborhood and space
+    const zone = this.camera.position.length() > 100 ? 'space' : 'earth';
+    if (zone !== this.zone) {
+      this.zone = zone;
+      this.callbacks.onZone?.(zone);
     }
     if (this.points) this.points.material.uniforms.uFade.value = this.fade;
     this.orbitGroup.visible = this.fade > 0.05;

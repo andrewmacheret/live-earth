@@ -21,16 +21,28 @@ const EXTRA = ['C/1995 O1', 'C/2020 F3'];
 // Pluto is already a planet in bodies.js
 const SKIP = new Set(['134340']);
 
-// short is for tight spots like the search list
+// short is for tight spots like the search list, and plural is for the legend
 export const KINDS = [
-  { id: 'dwarf', label: 'Dwarf planet', short: 'Dwarf planet', color: '#efe2c8' },
-  { id: 'hazardous', label: 'Potentially hazardous asteroid', short: 'Hazardous asteroid', color: '#ff6b6b' },
-  { id: 'neo', label: 'Near-Earth asteroid', short: 'Near-Earth asteroid', color: '#ffa94d' },
-  { id: 'main', label: 'Main-belt asteroid', short: 'Asteroid', color: '#b3a28c' },
-  { id: 'trojan', label: 'Jupiter trojan asteroid', short: 'Jupiter trojan', color: '#8fd16a' },
-  { id: 'centaur', label: 'Centaur (between Jupiter and Neptune)', short: 'Centaur', color: '#c792ff' },
-  { id: 'tno', label: 'Trans-Neptunian object', short: 'Beyond Neptune', color: '#6fa8ff' },
-  { id: 'comet', label: 'Comet', short: 'Comet', color: '#7ff0ff' }
+  { id: 'dwarf', label: 'Dwarf planet', short: 'Dwarf planet', plural: 'Dwarf planets', color: '#efe2c8' },
+  {
+    id: 'hazardous',
+    label: 'Potentially hazardous asteroid',
+    short: 'Hazardous asteroid',
+    plural: 'Potentially hazardous',
+    color: '#ff6b6b'
+  },
+  { id: 'neo', label: 'Near-Earth asteroid', short: 'Near-Earth asteroid', plural: 'Other near-Earth', color: '#ffa94d' },
+  { id: 'main', label: 'Main-belt asteroid', short: 'Asteroid', plural: 'Main asteroid belt', color: '#b3a28c' },
+  { id: 'trojan', label: 'Jupiter trojan asteroid', short: 'Jupiter trojan', plural: 'Jupiter trojans', color: '#8fd16a' },
+  {
+    id: 'centaur',
+    label: 'Centaur (between Jupiter and Neptune)',
+    short: 'Centaur',
+    plural: 'Centaurs',
+    color: '#c792ff'
+  },
+  { id: 'tno', label: 'Trans-Neptunian object', short: 'Beyond Neptune', plural: 'Kuiper belt and beyond', color: '#6fa8ff' },
+  { id: 'comet', label: 'Comet', short: 'Comet', plural: 'Comets', color: '#7ff0ff' }
 ];
 export const KIND_BY_ID = Object.fromEntries(KINDS.map(kind => [kind.id, kind]));
 

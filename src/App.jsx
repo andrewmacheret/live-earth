@@ -5,7 +5,7 @@ import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
 import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
 import { fromCompactPlanes } from './planes/compact.js';
 import { BODIES, BODY_BY_ID, nasaLink } from './space/bodies.js';
-import { fromCompactBodies, KIND_BY_ID, NOTABLE } from './space/smallBodies.js';
+import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodies.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
@@ -39,6 +39,8 @@ export default function App() {
   // asteroids and comets are a big file, so they load the first time you zoom out or search
   const [rocks, setRocks] = useState(null);
   const loadRocksRef = useRef(null);
+  // the legend shows Earth things near the Earth and space things once you zoom out
+  const [legendTab, setLegendTab] = useState('earth');
 
   useEffect(() => {
     const globe = new Globe(containerRef.current, {
@@ -46,7 +48,10 @@ export default function App() {
       onInfo: setInfo,
       onTapEmpty: () => tapEmptyRef.current?.(),
       onAnchor: setAnchor,
-      onZoomOut: () => loadRocksRef.current?.()
+      onZone: zone => {
+        setLegendTab(zone);
+        if (zone === 'space') loadRocksRef.current?.();
+      }
     });
     let rocksRequested = false;
     loadRocksRef.current = () => {
@@ -58,7 +63,9 @@ export default function App() {
           if (cancelled) return;
           const records = fromCompactBodies(data);
           globe.setRocks(records);
-          setRocks({ records, generated: data.generated });
+          const counts = {};
+          for (const record of records) counts[record.kind] = (counts[record.kind] || 0) + 1;
+          setRocks({ records, counts, generated: data.generated });
           // a link to a rock opens on it once the rocks load
           const wanted = new URLSearchParams(location.search).get('body');
           if (wanted?.startsWith('rock:') && globe.solar.has(wanted)) {
@@ -269,7 +276,7 @@ export default function App() {
   const applyHidden = next => {
     setHidden(next);
     globeRef.current.setHidden(next);
-    globeRef.current.setRocksShown(!next.has('rocks'));
+    globeRef.current.setRocksHidden(new Set(KINDS.filter(kind => next.has(`rock:${kind.id}`)).map(kind => kind.id)));
   };
 
   const toggleCategory = id => {
@@ -279,8 +286,18 @@ export default function App() {
     applyHidden(next);
   };
 
-  const toggleAll = () =>
-    applyHidden(hidden.size ? new Set() : new Set([...CATEGORIES.map(c => c.id), 'planes', 'rocks']));
+  // Show all and Hide all only change the tab you're looking at
+  const tabIds =
+    legendTab === 'space' ? KINDS.map(kind => `rock:${kind.id}`) : [...CATEGORIES.map(c => c.id), 'planes'];
+  const tabHidden = tabIds.some(id => hidden.has(id));
+  const toggleAll = () => {
+    const next = new Set(hidden);
+    for (const id of tabIds) {
+      if (tabHidden) next.delete(id);
+      else next.add(id);
+    }
+    applyHidden(next);
+  };
 
   const applyFocus = value => {
     setFocus(value);
@@ -388,65 +405,82 @@ export default function App() {
       {catalog && (
         <section className="panel bottom-left legend">
           <div className="legend-head">
-            <span>Categories</span>
-            <button onClick={toggleAll}>{hidden.size ? 'Show all' : 'Hide all'}</button>
+            <div className="legend-tabs" role="tablist">
+              {['earth', 'space'].map(tab => (
+                <button key={tab} role="tab" aria-selected={legendTab === tab} onClick={() => setLegendTab(tab)}>
+                  {tab === 'earth' ? 'Earth' : 'Space'}
+                </button>
+              ))}
+            </div>
+            <button onClick={toggleAll}>{tabHidden ? 'Show all' : 'Hide all'}</button>
           </div>
-          {CATEGORIES.filter(c => catalog.counts[c.id]).map(c => (
-            <button
-              key={c.id}
-              className={hidden.has(c.id) ? 'off' : ''}
-              onClick={() => toggleCategory(c.id)}
-              aria-pressed={!hidden.has(c.id)}
-            >
-              <span className="swatch" style={{ background: c.color }} />
-              {c.label}
-              <span className="count">{number.format(catalog.counts[c.id])}</span>
-            </button>
-          ))}
-          {planes && (
-            <button
-              className={`planes-row ${hidden.has('planes') ? 'off' : ''}`}
-              onClick={() => toggleCategory('planes')}
-              aria-pressed={!hidden.has('planes')}
-              title={planesNearLive ? undefined : 'Planes only fly in straight lines, so they only show near the live time'}
-            >
-              <span className="plane-icon" aria-hidden="true">
-                ✈
-              </span>
-              Planes
-              <span className="count">{planesNearLive ? number.format(planes.list.length) : 'live only'}</span>
-            </button>
+          {legendTab === 'space' && (
+            <>
+              {!rocks && <p className="hint">Loading asteroids and comets…</p>}
+              {rocks &&
+                KINDS.filter(kind => rocks.counts[kind.id]).map(kind => (
+                  <button
+                    key={kind.id}
+                    className={hidden.has(`rock:${kind.id}`) ? 'off' : ''}
+                    onClick={() => toggleCategory(`rock:${kind.id}`)}
+                    aria-pressed={!hidden.has(`rock:${kind.id}`)}
+                  >
+                    <span className="swatch" style={{ background: kind.color }} />
+                    {kind.plural}
+                    <span className="count">{number.format(rocks.counts[kind.id])}</span>
+                  </button>
+                ))}
+              <p className="hint">Drag to spin, scroll to zoom, click a dot to see its path around the Sun.</p>
+            </>
           )}
-          {rocks && (
-            <button
-              className={hidden.has('rocks') ? 'off' : ''}
-              onClick={() => toggleCategory('rocks')}
-              aria-pressed={!hidden.has('rocks')}
-              title="They show once you zoom out past the Moon"
-            >
-              <span className="swatch" style={{ background: KIND_BY_ID.main.color }} />
-              Asteroids and comets
-              <span className="count">{number.format(rocks.records.length)}</span>
-            </button>
+          {legendTab === 'earth' && (
+            <>
+              {CATEGORIES.filter(c => catalog.counts[c.id]).map(c => (
+                <button
+                  key={c.id}
+                  className={hidden.has(c.id) ? 'off' : ''}
+                  onClick={() => toggleCategory(c.id)}
+                  aria-pressed={!hidden.has(c.id)}
+                >
+                  <span className="swatch" style={{ background: c.color }} />
+                  {c.label}
+                  <span className="count">{number.format(catalog.counts[c.id])}</span>
+                </button>
+              ))}
+              {planes && (
+                <button
+                  className={`planes-row ${hidden.has('planes') ? 'off' : ''}`}
+                  onClick={() => toggleCategory('planes')}
+                  aria-pressed={!hidden.has('planes')}
+                  title={planesNearLive ? undefined : 'Planes only fly in straight lines, so they only show near the live time'}
+                >
+                  <span className="plane-icon" aria-hidden="true">
+                    ✈
+                  </span>
+                  Planes
+                  <span className="count">{planesNearLive ? number.format(planes.list.length) : 'live only'}</span>
+                </button>
+              )}
+              {favoriteIndices.length > 0 && (
+                <button className="recent" onClick={showFavorites} aria-pressed={focus?.key === 'favorites'}>
+                  <span className="star">★</span>
+                  Favorites
+                  <span className="count">{number.format(favoriteIndices.length)}</span>
+                </button>
+              )}
+              {catalog.recent.length > 0 && (
+                <button className="recent" onClick={showRecent} aria-pressed={focus?.key === 'recent'}>
+                  <span className="swatch" />
+                  Launched in the last 30 days
+                  <span className="count">{number.format(catalog.recent.length)}</span>
+                </button>
+              )}
+              <p className="hint">
+                Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot. Zoom out for the Moon, planets and
+                asteroids.
+              </p>
+            </>
           )}
-          {favoriteIndices.length > 0 && (
-            <button className="recent" onClick={showFavorites} aria-pressed={focus?.key === 'favorites'}>
-              <span className="star">★</span>
-              Favorites
-              <span className="count">{number.format(favoriteIndices.length)}</span>
-            </button>
-          )}
-          {catalog.recent.length > 0 && (
-            <button className="recent" onClick={showRecent} aria-pressed={focus?.key === 'recent'}>
-              <span className="swatch" />
-              Launched in the last 30 days
-              <span className="count">{number.format(catalog.recent.length)}</span>
-            </button>
-          )}
-          <p className="hint">
-            Dim dots are in Earth's shadow. Drag to spin, scroll to zoom, click a dot. Zoom out for the Moon, planets and
-            asteroids.
-          </p>
         </section>
       )}
 

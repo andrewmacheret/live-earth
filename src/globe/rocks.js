@@ -51,6 +51,9 @@ export function createRocks(records) {
     sizes[k] = NOTABLE[record.pdes] ? Math.max(3.5, SIZES[record.kind] ?? 0) : (SIZES[record.kind] ?? 1.6);
   });
 
+  const baseSizes = sizes.slice();
+  let hiddenKinds = new Set();
+
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
   geometry.setAttribute('aColor', new THREE.BufferAttribute(colors, 3));
@@ -136,6 +139,17 @@ export function createRocks(records) {
       solvedFor = null;
     },
 
+    // hidden kinds draw at size 0 and can't be picked
+    setHiddenKinds(kinds) {
+      hiddenKinds = kinds;
+      records.forEach((record, k) => (sizes[k] = kinds.has(record.kind) ? 0 : baseSizes[k]));
+      geometry.attributes.aSize.needsUpdate = true;
+    },
+
+    shown(k) {
+      return !hiddenKinds.has(records[k].kind);
+    },
+
     style(opacity, pixelRatio) {
       points.material.uniforms.uOpacity.value = opacity;
       points.material.uniforms.uScale.value = pixelRatio;
@@ -147,6 +161,7 @@ export function createRocks(records) {
     pick(x, y, e, width, height, radius) {
       let best = null;
       for (let k = 0; k < count; k++) {
+        if (!sizes[k]) continue;
         const px = positions[k * 3];
         const py = positions[k * 3 + 1];
         const pz = positions[k * 3 + 2];

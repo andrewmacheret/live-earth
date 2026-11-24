@@ -5,6 +5,7 @@ import {
   jplLink,
   julianDay,
   KIND_BY_ID,
+  KINDS,
   NOTABLE,
   periodDays,
   positionAt,
@@ -246,6 +247,7 @@ export function createSolarSystem(container, { onPick }) {
   // asteroids and comets, once they've loaded
   let rocks = null;
   let rocksShown = true;
+  let hiddenKinds = new Set();
   let rockLabels = [];
   let jd = julianDay(Date.now());
   const rockIndex = id => (id?.startsWith('rock:') && rocks ? (rocks.index.get(id.slice(5)) ?? -1) : -1);
@@ -394,11 +396,15 @@ export function createSolarSystem(container, { onPick }) {
         labelLayer.appendChild(label);
         return { k, label, position: new THREE.Vector3(), screen: null, distance: 0, screenPx: 0 };
       });
+      rocks.setHiddenKinds(hiddenKinds);
       rocks.update(jd);
     },
 
-    setRocksShown(shown) {
-      rocksShown = shown;
+    // kinds is a Set of kind ids from smallBodies.js, like 'comet'
+    setRocksHidden(kinds) {
+      hiddenKinds = kinds;
+      rocksShown = KINDS.some(kind => !kinds.has(kind.id));
+      rocks?.setHiddenKinds(kinds);
     },
 
     selectRock(id) {
@@ -544,7 +550,7 @@ export function createSolarSystem(container, { onPick }) {
       // famous rocks get names too, after the planets, once you're out among them
       for (const item of rockLabels) {
         const { label, position } = item;
-        let show = rockOpacity > 0.5;
+        let show = rockOpacity > 0.5 && rocks.shown(item.k);
         if (show) {
           rockAt(item.k, position);
           point.copy(position).applyMatrix4(camera.matrixWorldInverse);
