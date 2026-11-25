@@ -11,6 +11,7 @@ import { createSatellitePoints } from './satellitePoints.js';
 import { createSolarSystem } from './solarSystem.js';
 import { createSky, loadSky } from './stars.js';
 import { createAurora } from './aurora.js';
+import { createClouds } from './clouds.js';
 import { AURORA_URL, auroraGrid } from '../space/aurora.js';
 
 const SIZES = {
@@ -79,9 +80,9 @@ function drawOrbitLine(line, satrec, now) {
 }
 
 export class Globe {
-  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone, onAurora }) {
+  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone, onAurora, onClouds }) {
     this.container = container;
-    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone, onAurora };
+    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone, onAurora, onClouds };
     this.clock = { realStart: Date.now(), simStart: Date.now(), speed: 1, version: 0 };
     this.records = [];
     this.categories = [];
@@ -125,6 +126,17 @@ export class Globe {
     this.auroraHidden = false;
     this.auroraTimer = setInterval(() => document.hidden || this.loadAurora(), 10 * 60000);
     this.loadAurora();
+
+    // yesterday's clouds from NASA, a moment after the satellites start loading
+    this.clouds = createClouds(this.globe);
+    this.globe.earth.add(this.clouds.mesh);
+    this.cloudsHidden = false;
+    this.cloudsTimer = setTimeout(() => {
+      this.clouds
+        .load()
+        .then(day => this.callbacks.onClouds?.(day))
+        .catch(error => console.warn('No clouds', error));
+    }, 1500);
 
     // the real stars load a moment later
     this.stars = new THREE.Group();
@@ -391,6 +403,10 @@ export class Globe {
 
   setAuroraHidden(hide) {
     this.auroraHidden = hide;
+  }
+
+  setCloudsHidden(hide) {
+    this.cloudsHidden = hide;
   }
 
   loadAurora() {
@@ -717,6 +733,9 @@ export class Globe {
     // the aurora is only known for about now, so it fades away when the clock is hours off
     const auroraOff = this.auroraNow ? Math.abs(now - this.auroraNow.forecast.getTime()) / 3600000 : Infinity;
     this.aurora.setOpacity(this.auroraHidden ? 0 : 1 - THREE.MathUtils.smoothstep(auroraOff, 3, 6));
+    // clouds are a day old, so they fade away when the clock is a few days off
+    const cloudsOff = this.clouds.day ? Math.abs(now - Date.parse(`${this.clouds.day}T12:00Z`)) / 86400000 : Infinity;
+    this.clouds.setOpacity(this.cloudsHidden ? 0 : 1 - THREE.MathUtils.smoothstep(cloudsOff, 3, 5));
     this.solar.place(now);
     // satellites and planes fade out as you zoom out toward the planets
     this.fade = 1 - THREE.MathUtils.smoothstep(this.camera.position.length(), 15, 120);
@@ -960,6 +979,7 @@ export class Globe {
   dispose() {
     this.renderer.setAnimationLoop(null);
     clearInterval(this.auroraTimer);
+    clearTimeout(this.cloudsTimer);
     this.resizeObserver.disconnect();
     this.worker?.terminate();
     this.solar.dispose();

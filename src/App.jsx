@@ -33,6 +33,8 @@ export default function App() {
   const [planes, setPlanes] = useState(null);
   // NOAA's aurora forecast, like { peak: 19, observed: Date }
   const [aurora, setAurora] = useState(null);
+  // the day of NASA's cloud picture, like '2026-11-23'
+  const [cloudDay, setCloudDay] = useState(null);
   // on phones the info panel covers most of the screen, so closing it shrinks it to a bar instead
   const narrow = useMediaQuery('(max-width: 720px)');
   const [collapsed, setCollapsed] = useState(false);
@@ -56,6 +58,7 @@ export default function App() {
       onTapEmpty: () => tapEmptyRef.current?.(),
       onAnchor: setAnchor,
       onAurora: setAurora,
+      onClouds: setCloudDay,
       onZone: zone => {
         setLegendTab(zone);
         if (zone === 'space') loadSpaceRef.current?.();
@@ -332,6 +335,7 @@ export default function App() {
     globeRef.current.setShowersHidden(next.has('showers'));
     globeRef.current.setConstellationsHidden(next.has('constellations'));
     globeRef.current.setAuroraHidden(next.has('aurora'));
+    globeRef.current.setCloudsHidden(next.has('clouds'));
   };
 
   const toggleCategory = id => {
@@ -345,7 +349,7 @@ export default function App() {
   const tabIds =
     legendTab === 'space'
       ? ['moons', 'craft', 'showers', 'constellations', ...KINDS.map(kind => `rock:${kind.id}`)]
-      : [...CATEGORIES.map(c => c.id), 'planes', 'aurora'];
+      : [...CATEGORIES.map(c => c.id), 'planes', 'clouds', 'aurora'];
   const tabHidden = tabIds.some(id => hidden.has(id));
   const toggleAll = () => {
     const next = new Set(hidden);
@@ -562,6 +566,20 @@ export default function App() {
                   <span className="count">{planesNearLive ? number.format(planes.list.length) : 'live only'}</span>
                 </button>
               )}
+              {cloudDay && (
+                <button
+                  className={hidden.has('clouds') ? 'off' : ''}
+                  onClick={() => toggleCategory('clouds')}
+                  aria-pressed={!hidden.has('clouds')}
+                  title="Clouds from NASA's picture of the whole Earth, put together from a weather satellite's passes"
+                >
+                  <span className="swatch" style={{ background: '#e8eef5' }} />
+                  Clouds
+                  <span className="count">
+                    {new Date(`${cloudDay}T12:00Z`).toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' })}
+                  </span>
+                </button>
+              )}
               {aurora && (
                 <button
                   className={hidden.has('aurora') ? 'off' : ''}
@@ -731,6 +749,12 @@ export default function App() {
           <>
             {' '}
             · Aurora from <a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast">NOAA</a>
+          </>
+        )}
+        {cloudDay && (
+          <>
+            {' '}
+            · Clouds from <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api">NASA GIBS</a>
           </>
         )}{' '}
         · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a> · Stars from the{' '}

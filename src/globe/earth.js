@@ -80,6 +80,7 @@ export function createEarth() {
   };
 
   const sunDirection = { value: new THREE.Vector3(1, 0, 0) };
+  const dayMap = { value: load(dayUrl, true) };
 
   const earth = new THREE.Mesh(
     new THREE.SphereGeometry(1, 160, 80),
@@ -87,7 +88,7 @@ export function createEarth() {
       vertexShader: earthVertex,
       fragmentShader: earthFragment,
       uniforms: {
-        dayMap: { value: load(dayUrl, true) },
+        dayMap,
         nightMap: { value: load(nightUrl, true) },
         sunDirection
       }
@@ -111,6 +112,7 @@ export function createEarth() {
     earth,
     glow,
     sunDirection,
+    dayMap,
     setSun(direction) {
       sunDirection.value.set(...direction);
     }
