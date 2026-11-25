@@ -31,6 +31,8 @@ export default function App() {
   const [favorites, setFavorites] = useState(loadFavorites);
   useEffect(() => saveFavorites(favorites), [favorites]);
   const [planes, setPlanes] = useState(null);
+  // NOAA's aurora forecast, like { peak: 19, observed: Date }
+  const [aurora, setAurora] = useState(null);
   // on phones the info panel covers most of the screen, so closing it shrinks it to a bar instead
   const narrow = useMediaQuery('(max-width: 720px)');
   const [collapsed, setCollapsed] = useState(false);
@@ -53,6 +55,7 @@ export default function App() {
       onInfo: setInfo,
       onTapEmpty: () => tapEmptyRef.current?.(),
       onAnchor: setAnchor,
+      onAurora: setAurora,
       onZone: zone => {
         setLegendTab(zone);
         if (zone === 'space') loadSpaceRef.current?.();
@@ -328,6 +331,7 @@ export default function App() {
     globeRef.current.setMoonsHidden(next.has('moons'));
     globeRef.current.setShowersHidden(next.has('showers'));
     globeRef.current.setConstellationsHidden(next.has('constellations'));
+    globeRef.current.setAuroraHidden(next.has('aurora'));
   };
 
   const toggleCategory = id => {
@@ -341,7 +345,7 @@ export default function App() {
   const tabIds =
     legendTab === 'space'
       ? ['moons', 'craft', 'showers', 'constellations', ...KINDS.map(kind => `rock:${kind.id}`)]
-      : [...CATEGORIES.map(c => c.id), 'planes'];
+      : [...CATEGORIES.map(c => c.id), 'planes', 'aurora'];
   const tabHidden = tabIds.some(id => hidden.has(id));
   const toggleAll = () => {
     const next = new Set(hidden);
@@ -387,6 +391,8 @@ export default function App() {
 
   const live = speed === 1 && Math.abs(simTime - Date.now()) < 3000;
   const planesNearLive = Math.abs(simTime - Date.now()) < 5 * 60000;
+  // the aurora fades out 3 to 6 hours away from NOAA's forecast (see Globe.js)
+  const auroraNearLive = aurora && Math.abs(simTime - aurora.observed.getTime()) < 3 * 3600000;
 
   return (
     <>
@@ -556,6 +562,18 @@ export default function App() {
                   <span className="count">{planesNearLive ? number.format(planes.list.length) : 'live only'}</span>
                 </button>
               )}
+              {aurora && (
+                <button
+                  className={hidden.has('aurora') ? 'off' : ''}
+                  onClick={() => toggleCategory('aurora')}
+                  aria-pressed={!hidden.has('aurora')}
+                  title={`Where the aurora might be overhead tonight, from NOAA's forecast at ${aurora.observed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. It only shows on the night side.`}
+                >
+                  <span className="swatch" style={{ background: '#33ff73' }} />
+                  Aurora
+                  <span className="count">{auroraNearLive ? `up to ${Math.round(aurora.peak)}%` : 'live only'}</span>
+                </button>
+              )}
               {favoriteIndices.length > 0 && (
                 <button className="recent" onClick={showFavorites} aria-pressed={focus?.key === 'favorites'}>
                   <span className="star">★</span>
@@ -707,6 +725,12 @@ export default function App() {
           <>
             {' '}
             · Planes from <a href="https://opensky-network.org/">OpenSky Network</a>, updated {ageLabel(planes.generated)}
+          </>
+        )}{' '}
+        {aurora && (
+          <>
+            {' '}
+            · Aurora from <a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast">NOAA</a>
           </>
         )}{' '}
         · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a> · Stars from the{' '}

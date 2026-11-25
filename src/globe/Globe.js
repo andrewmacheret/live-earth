@@ -10,6 +10,8 @@ import { createPlanePoints } from './planePoints.js';
 import { createSatellitePoints } from './satellitePoints.js';
 import { createSolarSystem } from './solarSystem.js';
 import { createSky, loadSky } from './stars.js';
+import { createAurora } from './aurora.js';
+import { AURORA_URL, auroraGrid } from '../space/aurora.js';
 
 const SIZES = {
   station: 11,
@@ -77,9 +79,9 @@ function drawOrbitLine(line, satrec, now) {
 }
 
 export class Globe {
-  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone }) {
+  constructor(container, { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone, onAurora }) {
     this.container = container;
-    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone };
+    this.callbacks = { onHover, onSelect, onInfo, onTapEmpty, onAnchor, onZone, onAurora };
     this.clock = { realStart: Date.now(), simStart: Date.now(), speed: 1, version: 0 };
     this.records = [];
     this.categories = [];
@@ -117,6 +119,13 @@ export class Globe {
     this.controls.maxDistance = 1.5e7;
 
     this.globe = createEarth();
+    // NOAA's live aurora, checked every 10 minutes while the page is showing
+    this.aurora = createAurora(this.globe.sunDirection);
+    this.globe.earth.add(this.aurora.mesh);
+    this.auroraHidden = false;
+    this.auroraTimer = setInterval(() => document.hidden || this.loadAurora(), 10 * 60000);
+    this.loadAurora();
+
     // the real stars load a moment later
     this.stars = new THREE.Group();
     this.stars.renderOrder = -1;
@@ -378,6 +387,24 @@ export class Globe {
 
   setShowersHidden(hide) {
     this.solar.setShowersHidden(hide);
+  }
+
+  setAuroraHidden(hide) {
+    this.auroraHidden = hide;
+  }
+
+  loadAurora() {
+    fetch(AURORA_URL)
+      .then(response => {
+        if (!response.ok) throw new Error(`${response.status}`);
+        return response.json();
+      })
+      .then(json => {
+        this.auroraNow = auroraGrid(json);
+        this.aurora.update(this.auroraNow);
+        this.callbacks.onAurora?.({ peak: this.auroraNow.peak, observed: this.auroraNow.observed });
+      })
+      .catch(error => console.warn('No aurora', error));
   }
 
   setConstellationsHidden(hide) {
@@ -687,6 +714,9 @@ export class Globe {
     this.globe.earth.rotation.y = gstime(date);
     this.globe.earth.updateMatrixWorld();
     this.globe.setSun(sunDirection(date));
+    // the aurora is only known for about now, so it fades away when the clock is hours off
+    const auroraOff = this.auroraNow ? Math.abs(now - this.auroraNow.forecast.getTime()) / 3600000 : Infinity;
+    this.aurora.setOpacity(this.auroraHidden ? 0 : 1 - THREE.MathUtils.smoothstep(auroraOff, 3, 6));
     this.solar.place(now);
     // satellites and planes fade out as you zoom out toward the planets
     this.fade = 1 - THREE.MathUtils.smoothstep(this.camera.position.length(), 15, 120);
@@ -929,6 +959,7 @@ export class Globe {
 
   dispose() {
     this.renderer.setAnimationLoop(null);
+    clearInterval(this.auroraTimer);
     this.resizeObserver.disconnect();
     this.worker?.terminate();
     this.solar.dispose();

@@ -110,6 +110,7 @@ export function createEarth() {
   return {
     earth,
     glow,
+    sunDirection,
     setSun(direction) {
       sunDirection.value.set(...direction);
     }
