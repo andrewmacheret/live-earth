@@ -248,8 +248,13 @@ export default function App() {
   const isSat = !!info && !info.type;
   const selectionKey = info ? (isPlane ? `plane ${info.icao}` : bodyId ? `body ${bodyId}` : `sat ${info.noradId}`) : null;
   // open the full panel again whenever something new is picked
-  useEffect(() => setCollapsed(false), [selectionKey]);
-  const showBar = narrow && collapsed && !!info;
+  useEffect(() => {
+    setCollapsed(false);
+    // on a phone the panel and the Coming up list don't fit together
+    if (narrow) setEventsOpen(false);
+  }, [selectionKey]);
+  const panelHidden = narrow && collapsed && !!info;
+  const showBar = panelHidden && !eventsOpen;
   const closePanel = () => {
     if (narrow) setCollapsed(true);
     else deselect();
@@ -391,6 +396,7 @@ export default function App() {
 
   const toggleEvents = () => {
     if (!eventsOpen) loadSpaceRef.current?.();
+    if (!eventsOpen && narrow) setCollapsed(true);
     setEventsOpen(!eventsOpen);
   };
 
@@ -765,9 +771,9 @@ export default function App() {
 
       {showBar && <SelectionBar info={info} onExpand={() => setCollapsed(false)} onClose={deselect} />}
 
-      {isPlane && !showBar && <PlanePanel info={info} onClose={closePanel} />}
+      {isPlane && !panelHidden && <PlanePanel info={info} onClose={closePanel} />}
 
-      {isRock && !showBar && (
+      {isRock && !panelHidden && (
         <RockPanel
           info={info}
           summary={summary}
@@ -776,7 +782,7 @@ export default function App() {
         />
       )}
 
-      {isCraft && !showBar && (
+      {isCraft && !panelHidden && (
         <CraftPanel
           info={info}
           summary={summary}
@@ -785,7 +791,7 @@ export default function App() {
         />
       )}
 
-      {isMoon && !showBar && (
+      {isMoon && !panelHidden && (
         <MoonPanel
           info={info}
           summary={summary}
@@ -794,7 +800,7 @@ export default function App() {
         />
       )}
 
-      {isShower && !showBar && (
+      {isShower && !panelHidden && (
         <ShowerPanel
           info={info}
           summary={summary}
@@ -803,7 +809,7 @@ export default function App() {
         />
       )}
 
-      {bodyId && !isRock && !isCraft && !isMoon && !isShower && !showBar && (
+      {bodyId && !isRock && !isCraft && !isMoon && !isShower && !panelHidden && (
         <BodyPanel
           info={info}
           summary={summary}
@@ -814,7 +820,7 @@ export default function App() {
         />
       )}
 
-      {isSat && !showBar && (
+      {isSat && !panelHidden && (
         <InfoPanel
           info={info}
           article={article}

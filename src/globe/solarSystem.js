@@ -1096,6 +1096,20 @@ export function createSolarSystem(container, { onPick }) {
         Math.min(
           ...item.between.map(id => (byId[id].screen ? Math.hypot(byId[id].screen.x - item.screen.x, byId[id].screen.y - item.screen.y) : Infinity))
         ) > 24;
+      // puts a label right of its dot, or left of it if something's there or it would run off the screen.
+      // Returns the label's x, or null if neither side is free
+      const beside = (dotX, y, gap, textWidth) => {
+        const free = box => !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+        for (const x of [dotX + gap, dotX - gap - textWidth]) {
+          const box = { left: x, right: x + textWidth, top: y, bottom: y + 18 };
+          if (x === dotX + gap && box.right > width) continue;
+          if (free(box)) {
+            placed.push(box);
+            return x;
+          }
+        }
+        return null;
+      };
       const placeMarks = (list, visible, check = () => true) => {
         for (const item of list) {
           const { label, position } = item;
@@ -1126,19 +1140,9 @@ export function createSolarSystem(container, { onPick }) {
         let x = 0;
         let y = 0;
         if (show) {
-          const textWidth = label.textContent.length * 7 + 10;
-          const gap = Math.max(3, item.screenPx / 2) + 4;
           y = item.screen.y - 9;
-          const free = box => !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
-          // right of the dot, or left of it if something's already there
-          x = item.screen.x + gap;
-          let box = { left: x, right: x + textWidth, top: y, bottom: y + 18 };
-          if (!free(box)) {
-            x = item.screen.x - gap - textWidth;
-            box = { left: x, right: x + textWidth, top: y, bottom: y + 18 };
-          }
-          show = free(box);
-          if (show) placed.push(box);
+          x = beside(item.screen.x, y, Math.max(3, item.screenPx / 2) + 4, label.textContent.length * 7 + 10);
+          show = x !== null;
         }
         if (label.hidden === show) label.hidden = !show;
         if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
@@ -1159,11 +1163,9 @@ export function createSolarSystem(container, { onPick }) {
         let x = 0;
         let y = 0;
         if (show) {
-          x = item.screen.x + 7;
           y = item.screen.y - 9;
-          const box = { left: x, right: x + label.textContent.length * 6.5 + 10, top: y, bottom: y + 18 };
-          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
-          if (show) placed.push(box);
+          x = beside(item.screen.x, y, 7, label.textContent.length * 6.5 + 10);
+          show = x !== null;
         }
         if (label.hidden === show) label.hidden = !show;
         if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
@@ -1187,11 +1189,9 @@ export function createSolarSystem(container, { onPick }) {
           show = !behindEarth(camera.position, position) && !hidden(item);
         }
         if (show) {
-          x = item.screen.x + 7;
           y = item.screen.y - 9;
-          const box = { left: x, right: x + label.textContent.length * 6.5 + 10, top: y, bottom: y + 18 };
-          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
-          if (show) placed.push(box);
+          x = beside(item.screen.x, y, 7, label.textContent.length * 6.5 + 10);
+          show = x !== null;
         }
         if (label.hidden === show) label.hidden = !show;
         if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
