@@ -1027,14 +1027,25 @@ function RockPanel({ info, summary, onGo, onClose }) {
         <dt>Light time</dt>
         <dd>{formatLightTime(info.lightSeconds)} to reach Earth</dd>
         <dt>Orbit</dt>
-        <dd>
-          around the Sun every {formatDays(info.periodDays)}
-          <span className="muted">
-            {' '}
-            ({info.nearestAu.toFixed(info.nearestAu < 10 ? 2 : 0)} to {info.farthestAu.toFixed(info.farthestAu < 10 ? 2 : 0)} AU
-            out)
-          </span>
-        </dd>
+        {info.periodDays ? (
+          <dd>
+            around the Sun every {formatDays(info.periodDays)}
+            <span className="muted">
+              {' '}
+              ({info.nearestAu.toFixed(info.nearestAu < 10 ? 2 : 0)} to {info.farthestAu.toFixed(info.farthestAu < 10 ? 2 : 0)} AU
+              out)
+            </span>
+          </dd>
+        ) : (
+          <dd>
+            passing through once, never coming back
+            <span className="muted">
+              {' '}
+              (closest to the Sun {info.closest < new Date() ? 'was' : 'is'} {info.nearestAu.toFixed(2)} AU on{' '}
+              {info.closest.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })})
+            </span>
+          </dd>
+        )}
       </dl>
       <div className="actions">
         <button className="follow" onClick={onGo}>

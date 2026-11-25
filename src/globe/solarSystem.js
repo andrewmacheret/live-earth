@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { AU, BODIES, geocentric, KM_PER_AU, lagrangePoints, planetOrbit, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
 import {
+  distanceRange,
   ellipsePath,
   jplLink,
   julianDay,
@@ -670,8 +671,10 @@ export function createSolarSystem(container, { onPick }) {
         sizeKnown: record.size != null,
         sizeGuessed: record.size == null && record.H != null,
         periodDays: periodDays(orbit),
-        nearestAu: orbit.a * (1 - orbit.e),
-        farthestAu: orbit.a * (1 + orbit.e),
+        nearestAu: distanceRange(orbit)[0],
+        farthestAu: distanceRange(orbit)[1],
+        // for one passing through, the day it's closest to the Sun
+        closest: orbit.open ? new Date((orbit.tp - 2440587.5) * 86400000) : null,
         fromEarthKm,
         fromSunKm: Math.hypot(x, y, z) * KM_PER_AU,
         lightSeconds: fromEarthKm / 299792.458

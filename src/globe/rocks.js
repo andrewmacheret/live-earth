@@ -1,7 +1,7 @@
 // Asteroids, dwarf planets and comets as dots. Everything here is in AU from the Sun (J2000),
 // and solarSystem.js moves the whole group into the scene, like the planets' orbit lines.
 import * as THREE from 'three';
-import { eccentricAnomaly, ellipsePath, KIND_BY_ID, NOTABLE, orbitOf, positionAt } from '../space/smallBodies.js';
+import { KIND_BY_ID, NOTABLE, orbitOf, orbitPath, positionAt } from '../space/smallBodies.js';
 
 // solving 19,000 orbits takes a few milliseconds, so only do it a few times a second
 const UPDATE_MS = 250;
@@ -108,7 +108,7 @@ export function createRocks(records) {
       // start the selected rock's line right at the rock, so it sits exactly on it
       if (selected >= 0) {
         const orbit = orbits[selected];
-        ellipsePath(orbit, eccentricAnomaly(orbit, jd), line.geometry.attributes.position.array, ORBIT_POINTS);
+        orbitPath(orbit, jd, line.geometry.attributes.position.array, ORBIT_POINTS);
         line.geometry.attributes.position.needsUpdate = true;
       }
       // when time runs days per second, solve more often so they don't jump

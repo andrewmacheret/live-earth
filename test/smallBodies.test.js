@@ -7,6 +7,7 @@ import {
   julianDay,
   kindOf,
   orbitOf,
+  orbitPath,
   periodDays,
   positionAt,
   sizeFromH,
@@ -105,4 +106,57 @@ test('packs rocks into columns and moves them all to the same epoch', () => {
 test('guesses sizes from brightness', () => {
   assert.ok(Math.abs(sizeFromH(3.34) - 760) < 50);
   assert.ok(sizeFromH(22) > 0.1 && sizeFromH(22) < 0.2);
+});
+
+const MU = 0.01720209895 ** 2;
+// speed squared over 2 minus pull, which stays the same all along an orbit
+function energy(orbit, jd) {
+  const dt = 1e-4;
+  const a = positionAt(orbit, jd - dt);
+  const b = positionAt(orbit, jd + dt);
+  const p = positionAt(orbit, jd);
+  const v2 = b.reduce((sum, value, k) => sum + ((value - a[k]) / (2 * dt)) ** 2, 0);
+  return v2 / 2 - MU / Math.hypot(...p);
+}
+
+test('visitors that pass through once follow their open orbit', () => {
+  const tp = 2460977.94;
+  for (const e of [1, 1.2, 6.12]) {
+    const q = 1.36;
+    const orbit = orbitOf({ e, a: q, i: 175.1, node: 322.2, peri: 128, M: 30, epoch: tp + 30 });
+    assert.ok(orbit.open);
+    assert.equal(periodDays(orbit), null);
+    // closest to the Sun, q away, on day tp
+    assert.ok(Math.abs(Math.hypot(...positionAt(orbit, tp)) - q) < 1e-9);
+    // a parabola has exactly enough energy to escape, and the others have more, the same everywhere
+    const expected = e === 1 ? 0 : MU / (2 * (q / (e - 1)));
+    for (const day of [-3000, -40, 0, 1, 365, 4000]) {
+      assert.ok(Math.abs(energy(orbit, tp + day) - expected) < 1e-9 + Math.abs(expected) * 1e-5, `e ${e} day ${day}`);
+    }
+    // moving away from the Sun after tp, and toward it before
+    const r = day => Math.hypot(...positionAt(orbit, tp + day));
+    assert.ok(r(100) > r(50) && r(-100) > r(-50));
+    // the line runs through the body
+    const path = orbitPath(orbit, tp + 200, new Array(257 * 3), 256);
+    const p = positionAt(orbit, tp + 200);
+    assert.ok(Math.hypot(path[128 * 3] - p[0], path[128 * 3 + 1] - p[1], path[128 * 3 + 2] - p[2]) < 1e-9);
+  }
+});
+
+test('keeps comets passing through, and the interstellar visitors under their short names', () => {
+  const rows = [
+    row({ full_name: 'C/2025 N1 (ATLAS)', pdes: '3I', alias: 'C/2025 N1', kind: 'cu', e: '6.12', a: '-0.264', q: '1.36', tp: '2460977.94' }),
+    // the same one again from the comet query, under its comet name
+    row({ full_name: 'C/2025 N1 (ATLAS)', pdes: 'C/2025 N1', kind: 'cu', e: '6.12', a: '-0.264', q: '1.36', tp: '2460977.94' }),
+    row({ full_name: 'C/2021 G2 (ATLAS)', pdes: 'C/2021 G2', kind: 'cu', e: '1.0006', a: '-8201', q: '4.98', tp: '2460562.63' })
+  ];
+  const data = toCompactBodies(rows, { generated: '2026-11-24T02:30:00.000Z' });
+  assert.equal(data.count, 2);
+  const [atlas, comet] = fromCompactBodies(JSON.parse(JSON.stringify(data)));
+  assert.equal(atlas.name, '3I/ATLAS');
+  assert.equal(atlas.kind, 'interstellar');
+  assert.equal(comet.kind, 'comet');
+  const orbit = orbitOf(atlas);
+  assert.ok(Math.abs(orbit.tp - 2460977.94) < 1e-6);
+  assert.ok(Math.abs(Math.hypot(...positionAt(orbit, 2460977.94)) - 1.36) < 1e-9);
 });
