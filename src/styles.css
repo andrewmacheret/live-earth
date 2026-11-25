@@ -243,6 +243,32 @@ h1 {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.sky-mark,
+.star-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 16px;
+  line-height: 16px;
+  padding-left: 8px;
+  font-size: 10px;
+  white-space: nowrap;
+  text-shadow: 0 0 4px #000;
+}
+
+.sky-mark {
+  color: #7f9fd0;
+  opacity: 0.5;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.star-mark {
+  color: #d9d2bd;
+  opacity: 0.6;
+}
+
 .region-mark {
   font-size: 11px;
   font-style: italic;

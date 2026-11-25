@@ -327,6 +327,7 @@ export default function App() {
     globeRef.current.setCraftsHidden(next.has('craft'));
     globeRef.current.setMoonsHidden(next.has('moons'));
     globeRef.current.setShowersHidden(next.has('showers'));
+    globeRef.current.setConstellationsHidden(next.has('constellations'));
   };
 
   const toggleCategory = id => {
@@ -339,7 +340,7 @@ export default function App() {
   // Show all and Hide all only change the tab you're looking at
   const tabIds =
     legendTab === 'space'
-      ? ['moons', 'craft', 'showers', ...KINDS.map(kind => `rock:${kind.id}`)]
+      ? ['moons', 'craft', 'showers', 'constellations', ...KINDS.map(kind => `rock:${kind.id}`)]
       : [...CATEGORIES.map(c => c.id), 'planes'];
   const tabHidden = tabIds.some(id => hidden.has(id));
   const toggleAll = () => {
@@ -501,6 +502,15 @@ export default function App() {
                 <span className="swatch" style={{ background: PARENT_BY_ID['swift-tuttle'].color }} />
                 Meteor showers
                 <span className="count">{SHOWERS.length}</span>
+              </button>
+              <button
+                className={hidden.has('constellations') ? 'off' : ''}
+                onClick={() => toggleCategory('constellations')}
+                aria-pressed={!hidden.has('constellations')}
+              >
+                <span className="swatch" style={{ background: '#5b7fb5' }} />
+                Constellations
+                <span className="count">88</span>
               </button>
               {rocks &&
                 KINDS.filter(kind => rocks.counts[kind.id]).map(kind => (
@@ -699,7 +709,8 @@ export default function App() {
             · Planes from <a href="https://opensky-network.org/">OpenSky Network</a>, updated {ageLabel(planes.generated)}
           </>
         )}{' '}
-        · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a>
+        · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a> · Stars from the{' '}
+        <a href="https://github.com/ofrohn/d3-celestial">Yale Bright Star Catalog via d3-celestial</a>
         {rocks?.generated && (
           <>
             {' '}

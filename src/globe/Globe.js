@@ -9,7 +9,7 @@ import { createEarth } from './earth.js';
 import { createPlanePoints } from './planePoints.js';
 import { createSatellitePoints } from './satellitePoints.js';
 import { createSolarSystem } from './solarSystem.js';
-import { createStars } from './stars.js';
+import { createSky, loadSky } from './stars.js';
 
 const SIZES = {
   station: 11,
@@ -117,8 +117,20 @@ export class Globe {
     this.controls.maxDistance = 1.5e7;
 
     this.globe = createEarth();
-    this.stars = createStars();
+    // the real stars load a moment later
+    this.stars = new THREE.Group();
     this.stars.renderOrder = -1;
+    this.constellationsHidden = false;
+    loadSky()
+      .then(data => {
+        const sky = createSky(data, sceneFrame(new Date()));
+        sky.points.renderOrder = sky.lines.renderOrder = -1;
+        sky.lines.visible = !this.constellationsHidden;
+        this.constellationLines = sky.lines;
+        this.stars.add(sky.points, sky.lines);
+        this.solar.setSky(sky);
+      })
+      .catch(error => console.warn('No stars', error));
     this.solar = createSolarSystem(container, { onPick: id => this.selectBody(id) });
     this.scene.add(this.globe.earth, this.globe.glow, this.stars, this.solar.group);
 
@@ -366,6 +378,12 @@ export class Globe {
 
   setShowersHidden(hide) {
     this.solar.setShowersHidden(hide);
+  }
+
+  setConstellationsHidden(hide) {
+    this.constellationsHidden = hide;
+    if (this.constellationLines) this.constellationLines.visible = !hide;
+    this.solar.setConstellationsHidden(hide);
   }
 
   updateBodySelection(date) {

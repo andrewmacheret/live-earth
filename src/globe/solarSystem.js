@@ -565,6 +565,11 @@ export function createSolarSystem(container, { onPick }) {
     return { ...item, shower, local: new THREE.Vector3(spot.x, spot.y, spot.z) };
   });
   const showerById = new Map(showers.map(item => [item.shower.id, item]));
+
+  // names of the constellations and the brightest stars, filled in by setSky
+  let constellationMarks = [];
+  let starMarks = [];
+  let constellationsShown = true;
   const showerItem = id => (id?.startsWith('shower:') ? showerById.get(id.slice(7)) : undefined);
 
   let positions = null;
@@ -653,6 +658,17 @@ export function createSolarSystem(container, { onPick }) {
 
     setShowersHidden(hide) {
       showersShown = !hide;
+    },
+
+    // sky is from createSky in stars.js
+    setSky(sky) {
+      for (const item of [...constellationMarks, ...starMarks]) item.label.remove();
+      constellationMarks = sky.constellations.map(({ name, direction }) => ({ ...mark('sky-mark', name), direction }));
+      starMarks = sky.named.map(({ name, direction }) => ({ ...mark('star-mark', name), direction }));
+    },
+
+    setConstellationsHidden(hide) {
+      constellationsShown = !hide;
     },
 
     // Facts for the info panel about a meteor shower
@@ -1143,6 +1159,12 @@ export function createSolarSystem(container, { onPick }) {
 
       placeMarks(lagrange, true, lagrangeApart);
       placeMarks(heliosphere, heliosphereOpacity > 0.5);
+
+      // star and constellation names go last, so they never cover anything closer.
+      // They're far past everything, in their direction from the camera.
+      for (const item of [...starMarks, ...constellationMarks]) item.position.copy(camera.position).addScaledVector(item.direction, 1e12);
+      placeMarks(starMarks, true);
+      placeMarks(constellationMarks, constellationsShown);
     },
 
     // Bodies under the pointer can be picked like satellites. Returns screen spots for each body.
