@@ -11,6 +11,7 @@ import {
   positionAt,
   sizeFromH
 } from '../space/smallBodies.js';
+import { moonOffset, moonPath, moonPeriod } from '../space/moons.js';
 import { CRAFT_COLOR, craftPath, craftPosition, craftSpeed } from '../space/spacecraft.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
 import { createRocks } from './rocks.js';
@@ -19,6 +20,7 @@ const TEXTURES = import.meta.glob('../space/textures/*', { eager: true, query: '
 const MOON_ORBIT_POINTS = 256;
 const MOON_ORBIT_DAYS = 27.32;
 const PLANET_ORBIT_POINTS = 360;
+const MOON_PATH_POINTS = 128;
 const DAY_MS = 86400000;
 // labels are skipped when they would cover a label for a body that matters more
 const LABEL_ORDER = ['sun', 'earth', ...BODIES.map(body => body.id).filter(id => id !== 'sun' && id !== 'earth')];
@@ -199,7 +201,7 @@ export function createSolarSystem(container, { onPick }) {
   labelLayer.className = 'body-labels';
   container.appendChild(labelLayer);
 
-  const items = BODIES.map(body => {
+  const makeItem = body => {
     const holder = new THREE.Group();
     const radius = body.radiusKm / EARTH_RADIUS_KM;
     // the Earth's globe is drawn by earth.js
@@ -217,8 +219,15 @@ export function createSolarSystem(container, { onPick }) {
     labelLayer.appendChild(label);
     const ring = mesh?.children[0] ?? null;
     return { body, holder, mesh, ring, glow, label, radius, screenPx: 0, textureRequested: false };
-  });
+  };
+  const items = BODIES.map(makeItem);
   const byId = Object.fromEntries(items.map(item => [item.body.id, item]));
+  const labelOrder = [...LABEL_ORDER];
+
+  // Moons of the other planets, once they've loaded. They're bodies like the planets, with ids like 'moon:io'.
+  // Each planet's moons are placed and drawn in a group turned to that planet's equator, in km.
+  let moonSystems = [];
+  let moonsShown = true;
 
   // Planet orbits and the asteroids are drawn around the Sun in AU, then this group moves, turns and
   // scales them into the scene. Small numbers like AU keep them sharp on the graphics card.
@@ -388,7 +397,8 @@ export function createSolarSystem(container, { onPick }) {
   return {
     group,
 
-    // Ids are body ids like 'mars', 'rock:' and a JPL designation like 'rock:433' or 'rock:1P',
+    // Ids are body ids like 'mars', 'moon:' and a moon id from moons.js like 'moon:io',
+    // 'rock:' and a JPL designation like 'rock:433' or 'rock:1P',
     // or 'craft:' and a spacecraft id from spacecraft.js like 'craft:voyager-1'
     has(id) {
       return !!byId[id] || rockIndex(id) >= 0 || !!craftItem(id);
@@ -430,6 +440,78 @@ export function createSolarSystem(container, { onPick }) {
       const k = rockIndex(id);
       if (k >= 0) return rocks.records[k].name;
       return craftItem(id)?.craft.name ?? byId[id].body.name;
+    },
+
+    // list comes from fromCompactMoons in moons.js
+    setMoons(list) {
+      const byPlanet = new Map();
+      for (const moon of list) {
+        const planet = BODIES.find(body => body.id === moon.planet);
+        const body = {
+          id: `moon:${moon.id}`,
+          name: moon.name,
+          kind: `Moon of ${planet.name}`,
+          radiusKm: moon.radiusKm,
+          color: moon.color,
+          dot: 3,
+          moon
+        };
+        const item = makeItem(body);
+        item.label.classList.add('moon-label');
+        items.push(item);
+        byId[body.id] = item;
+        labelOrder.push(body.id);
+        if (!byPlanet.has(moon.planet)) byPlanet.set(moon.planet, []);
+        byPlanet.get(moon.planet).push(item);
+      }
+      moonSystems = [...byPlanet].map(([planet, moons]) => {
+        const system = new THREE.Group();
+        system.matrixAutoUpdate = false;
+        group.add(system);
+        const lines = moons.map(item => {
+          const line = new THREE.Line(
+            new THREE.BufferGeometry().setAttribute(
+              'position',
+              new THREE.BufferAttribute(new Float32Array((MOON_PATH_POINTS + 1) * 3), 3)
+            ),
+            new THREE.LineBasicMaterial({
+              color: item.body.color,
+              transparent: true,
+              opacity: 0,
+              blending: THREE.AdditiveBlending,
+              depthWrite: false
+            })
+          );
+          line.frustumCulled = false;
+          line.visible = false;
+          system.add(line);
+          return { item, line };
+        });
+        return { planet, group: system, moons, lines };
+      });
+    },
+
+    setMoonsHidden(hide) {
+      moonsShown = !hide;
+    },
+
+    // Facts for the info panel about a moon
+    moonFacts(id) {
+      const item = byId[id];
+      const moon = item?.body.moon;
+      if (!moon) return null;
+      const fromEarthKm = item.holder.position.length() * EARTH_RADIUS_KM;
+      return {
+        name: moon.name,
+        moon,
+        kind: item.body.kind,
+        planet: BODIES.find(body => body.id === moon.planet),
+        fromEarthKm,
+        fromPlanetKm: item.holder.position.distanceTo(byId[moon.planet].holder.position) * EARTH_RADIUS_KM,
+        periodDays: moonPeriod(moon),
+        retrograde: moon.i > 90,
+        lightSeconds: fromEarthKm / 299792.458
+      };
     },
 
     // list comes from fromCompactSpacecraft in spacecraft.js
@@ -567,6 +649,7 @@ export function createSolarSystem(container, { onPick }) {
       const v = [0, 0, 0];
       for (const item of items) {
         const p = positions[item.body.id];
+        if (!p) continue;
         item.holder.position.set(...frame(p.x, p.y, p.z, v));
         if (item.mesh && item.mesh.visible) orient(item.mesh, item.body.id, date, frame);
       }
@@ -584,6 +667,22 @@ export function createSolarSystem(container, { onPick }) {
       geoFrame.matrixWorldNeedsUpdate = true;
       if (now !== orbitsTime) drawOrbits(now);
       jd = julianDay(now);
+      for (const system of moonSystems) {
+        // the planet's equator: x where it crosses Earth's equator, z its north pole
+        const { north } = spinAxis(system.planet, date);
+        const node = new THREE.Vector3(-north.y, north.x, 0).normalize();
+        const pole = new THREE.Vector3(north.x, north.y, north.z);
+        const across = pole.clone().cross(node);
+        const toScene = d => new THREE.Vector3(...frame(d.x, d.y, d.z, [0, 0, 0], 0, 1));
+        system.group.matrix
+          .makeBasis(toScene(node), toScene(across), toScene(pole))
+          .scale(new THREE.Vector3(1 / EARTH_RADIUS_KM, 1 / EARTH_RADIUS_KM, 1 / EARTH_RADIUS_KM))
+          .setPosition(byId[system.planet].holder.position);
+        system.group.matrixWorldNeedsUpdate = true;
+        for (const item of system.moons) {
+          item.holder.position.fromArray(moonOffset(item.body.moon, jd, v)).applyMatrix4(system.group.matrix);
+        }
+      }
       if (rocks && (rocks.group.visible || rocks.selected >= 0)) rocks.update(jd);
       for (const item of crafts) {
         item.at = !!craftPosition(item.craft, jd, v);
@@ -616,6 +715,13 @@ export function createSolarSystem(container, { onPick }) {
           uniforms.uSize.value = body.dot * pixelRatio;
           uniforms.uOpacity.value = 1 - THREE.MathUtils.smoothstep(item.screenPx, body.dot * 0.6, body.dot * 1.6);
         }
+        if (body.moon) {
+          // how far from its planet it looks, in pixels. Too close and it would just sit on the planet's dot.
+          item.apartPx = (holder.position.distanceTo(byId[body.moon.planet].holder.position) / distance) * focal;
+          item.fade = moonsShown ? THREE.MathUtils.smoothstep(item.apartPx, 3, 8) : 0;
+          uniforms.uOpacity.value *= item.fade;
+          holder.visible = item.fade > 0;
+        }
         if (mesh) {
           // rings reach past the planet, so they count toward its size
           mesh.visible = item.screenPx * (item.ring ? 2.4 : 1) > 0.5;
@@ -632,6 +738,19 @@ export function createSolarSystem(container, { onPick }) {
       moonOrbit.material.opacity = 0.2 + 0.15 * THREE.MathUtils.smoothstep(earthDistance, 8, 30);
       const orbitOpacity = 0.2 + 0.2 * THREE.MathUtils.smoothstep(earthDistance, 300, 3000);
       for (const { line } of orbitLines) line.material.opacity = orbitOpacity;
+      // a moon's orbit shows once it's big enough on screen to tell apart from the planet
+      for (const system of moonSystems) {
+        const planetDistance = camera.position.distanceTo(byId[system.planet].holder.position);
+        for (const { item, line } of system.lines) {
+          const orbitPx = ((2 * item.body.moon.a) / EARTH_RADIUS_KM / planetDistance) * focal;
+          line.material.opacity = moonsShown ? 0.25 * THREE.MathUtils.smoothstep(orbitPx, 30, 120) : 0;
+          line.visible = line.material.opacity > 0;
+          if (line.visible) {
+            moonPath(item.body.moon, jd, line.geometry.attributes.position.array, MOON_PATH_POINTS);
+            line.geometry.attributes.position.needsUpdate = true;
+          }
+        }
+      }
       if (rocks) {
         rockOpacity = rocksShown ? THREE.MathUtils.smoothstep(earthDistance, 150, 1500) : 0;
         // a picked rock stays visible even when it passes close to the Earth
@@ -650,12 +769,13 @@ export function createSolarSystem(container, { onPick }) {
 
       project(camera, width, height);
       const placed = [];
-      for (const id of LABEL_ORDER) {
+      for (const id of labelOrder) {
         const item = byId[id];
         const { label, holder } = item;
         let show = !!item.screen && item.screenPx < 0.3 * Math.min(width, height);
         // close to the Earth the planets are just dots in the sky, so only the Sun and Moon get names
         if (show && id !== 'sun' && id !== 'moon') show = earthDistance > 40;
+        if (show && item.body.moon) show = item.fade > 0.9 && item.apartPx > 16;
         if (show && id !== 'earth') show = !behindEarth(camera.position, holder.position);
         if (show) show = !hidden(item);
         let x = 0;
@@ -725,6 +845,7 @@ export function createSolarSystem(container, { onPick }) {
       project(camera, width, height);
       for (const item of items) {
         if (!item.screen || (item.body.id === 'earth' && earthDistance < 40) || hidden(item)) continue;
+        if (item.body.moon && item.fade < 0.5) continue;
         out.push({
           id: item.body.id,
           ...item.screen,

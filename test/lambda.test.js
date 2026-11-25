@@ -162,6 +162,21 @@ test('the Lambda saves spacecraft, and keeps the old file when most are missing'
   assert.equal(craft, undefined);
 });
 
+test('the Lambda saves moons, and keeps the old file when most are missing', async () => {
+  let moons;
+  const options = { download: fakeCelesTrak, loadPrevious: async () => null, save: async () => {}, log: quiet };
+  const fakeMoons = count => async () => ({ count, moons: [] });
+  const saveMoons = async body => (moons = body);
+  const result = await createHandler({ ...options, downloadMoonOrbits: fakeMoons(26), saveMoons })();
+  assert.equal(result.moons, 26);
+  assert.equal(JSON.parse(moons).count, 26);
+
+  moons = undefined;
+  const few = await createHandler({ ...options, downloadMoonOrbits: fakeMoons(3), saveMoons })();
+  assert.equal(few.moons, 0);
+  assert.equal(moons, undefined);
+});
+
 test('the Lambda keeps the old file when every group fails', async () => {
   let saved = false;
   const handler = createHandler({

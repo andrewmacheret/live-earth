@@ -323,10 +323,20 @@ export class Globe {
     if (rock) return { type: 'rock', id, anchored, ...rock };
     const craft = this.solar.craftFacts(id, date);
     if (craft) return { type: 'craft', id, anchored, ...craft };
+    const moon = this.solar.moonFacts(id);
+    if (moon) return { type: 'moon', id, anchored, ...moon };
     return { type: 'body', id, anchored, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
   }
 
-  // Asteroids, comets and spacecraft load later, the first time you zoom out (see onZone)
+  // Moons, asteroids, comets and spacecraft load later, the first time you zoom out (see onZone)
+  setMoons(list) {
+    this.solar.setMoons(list);
+  }
+
+  setMoonsHidden(hide) {
+    this.solar.setMoonsHidden(hide);
+  }
+
   setRocks(records) {
     this.solar.setRocks(records);
   }
