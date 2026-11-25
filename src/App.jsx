@@ -7,6 +7,7 @@ import { fromCompactPlanes } from './planes/compact.js';
 import { BODIES, BODY_BY_ID, bodyLink, DWARF_PDES } from './space/bodies.js';
 import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodies.js';
 import { fromCompactMoons } from './space/moons.js';
+import { readView, viewParams, VIEW_KEYS } from './links.js';
 import { CRAFT_COLOR, fromCompactSpacecraft } from './space/spacecraft.js';
 import { PARENT_BY_ID, peakLabel, SHOWERS } from './space/meteors.js';
 import { nextLunarEclipse, nextSolarEclipse, placeLabel } from './space/eclipses.js';
@@ -68,6 +69,20 @@ export default function App() {
         if (zone === 'space') loadSpaceRef.current?.();
       }
     });
+    // a shared link can set the clock and the camera (see links.js). The camera waits for what it
+    // looks at to load, then the params come off the address bar.
+    const linkView = readView(new URLSearchParams(location.search));
+    if (linkView.time != null || linkView.speed != null) {
+      globe.setClock({ simStart: linkView.time ?? Date.now(), speed: linkView.speed ?? 1 });
+      setSpeed(linkView.speed ?? 1);
+      setSimTime(globe.simNow());
+    }
+    let viewPending = linkView.anchor ? linkView : null;
+    const applyLinkedView = () => {
+      if (!viewPending || !globe.solar.has(viewPending.anchor)) return;
+      globe.setView(viewPending.anchor, viewPending.offset);
+      viewPending = null;
+    };
     let spaceRequested = false;
     const getJson = url =>
       fetch(url).then(response => (response.ok ? response.json() : Promise.reject(new Error(`HTTP ${response.status}`))));
@@ -78,6 +93,7 @@ export default function App() {
         globe.selectBody(wanted);
         globe.goTo(wanted);
       }
+      applyLinkedView();
     };
     loadSpaceRef.current = () => {
       if (spaceRequested) return;
@@ -144,24 +160,30 @@ export default function App() {
         });
         setCatalog({ records, counts, launches, recent, wiki, withArticles, indexById, generated: data.generated });
         const params = new URLSearchParams(location.search);
-        const wanted = Number(params.get('sat'));
-        // older links point at dwarf planets as asteroids, like rock:136199 for Eris
-        const linked = BODIES.find(b => b.pdes && params.get('body') === `rock:${b.pdes}`)?.id ?? params.get('body');
-        // meteor showers are built in, so like planets they don't wait for anything to load
-        const body = BODY_BY_ID[linked]?.id ?? (linked?.startsWith('shower:') && globe.solar.has(linked) ? linked : null);
-        let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
-        if (start < 0 && body) {
-          globe.selectBody(body);
-          if (body !== 'earth') globe.goTo(body);
-          return;
-        }
-        if (start < 0 && /^(rock|craft|moon):/.test(params.get('body'))) return loadSpaceRef.current();
-        // a link to a plane opens on that plane once the planes load
-        if (start < 0 && !params.get('plane')) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
-        if (start >= 0) {
-          globe.select(start);
-          globe.faceSelected(false);
-        }
+        const openStart = () => {
+          const wanted = Number(params.get('sat'));
+          // older links point at dwarf planets as asteroids, like rock:136199 for Eris
+          const linked = BODIES.find(b => b.pdes && params.get('body') === `rock:${b.pdes}`)?.id ?? params.get('body');
+          // meteor showers are built in, so like planets they don't wait for anything to load
+          const body = BODY_BY_ID[linked]?.id ?? (linked?.startsWith('shower:') && globe.solar.has(linked) ? linked : null);
+          let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
+          if (start < 0 && body) {
+            globe.selectBody(body);
+            if (body !== 'earth') globe.goTo(body);
+            return;
+          }
+          if (start < 0 && /^(rock|craft|moon):/.test(params.get('body'))) return loadSpaceRef.current();
+          // a link to a plane opens on that plane once the planes load
+          if (start < 0 && !params.get('plane')) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
+          if (start >= 0) {
+            globe.select(start);
+            globe.faceSelected(false);
+          }
+        };
+        openStart();
+        // the camera may look at a moon, asteroid or spacecraft, which load with the space data
+        if (viewPending && /^(rock|craft|moon):/.test(viewPending.anchor)) loadSpaceRef.current();
+        applyLinkedView();
       })
       .catch(err => !cancelled && setError(err.message));
 
@@ -318,8 +340,26 @@ export default function App() {
         (linked.startsWith('moon:') && !moons);
       if (!waiting) url.searchParams.delete('body');
     }
+    // a shared link's time and camera only matter when it opens
+    for (const key of VIEW_KEYS) url.searchParams.delete(key);
     if (url.href !== location.href) history.replaceState(null, '', url);
   }, [selectedId, selectedPlane, bodyId, catalog, planes, rocks, crafts, moons]);
+
+  const [linkCopied, setLinkCopied] = useState(false);
+  // copy a link to this moment and this view
+  const shareLink = () => {
+    const globe = globeRef.current;
+    const url = new URL(location.href);
+    const params = viewParams({ time: globe.simNow(), live, speed, ...globe.getView() });
+    for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
+    navigator.clipboard.writeText(url.href).then(
+      () => {
+        setLinkCopied(true);
+        setTimeout(() => setLinkCopied(false), 2000);
+      },
+      () => window.prompt('Copy this link', url.href)
+    );
+  };
 
   const changeSpeed = value => {
     const globe = globeRef.current;
@@ -708,6 +748,10 @@ export default function App() {
           {speedLabel(speed)} ·{' '}
           <button className="link-button" onClick={toggleEvents} aria-expanded={eventsOpen}>
             {eventsOpen ? 'Hide coming up' : 'Coming up'}
+          </button>{' '}
+          ·{' '}
+          <button className="link-button" onClick={shareLink} title="Copy a link to this moment and this view">
+            {linkCopied ? 'Link copied' : 'Share'}
           </button>
         </p>
       </section>

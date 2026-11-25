@@ -410,6 +410,25 @@ export class Globe {
     else this.goTo('moon', { direction: () => moon().negate() });
   }
 
+  // What the camera is looking at and where it sits from there as [x, y, z] in scene units, for links
+  getView() {
+    return { anchor: this.anchor, offset: this.camera.position.clone().sub(this.controls.target).toArray() };
+  }
+
+  // Put the camera back where getView said, right away
+  setView(anchor, offset) {
+    this.setFollow(false);
+    this.flight = null;
+    this.anchor = anchor;
+    this.anchorFrom = null;
+    const at = this.solar.positionOf(anchor, new THREE.Vector3());
+    this.controls.target.copy(at);
+    this.camera.position.copy(at).add(new THREE.Vector3(...offset));
+    this.controls.minDistance = anchor === 'earth' ? 1.08 : this.solar.radiusOf(anchor) * 1.15;
+    this.lastInfoAt = 0;
+    this.callbacks.onAnchor?.(anchor);
+  }
+
   // Point the camera at an event's view from events.js. The page sets the clock.
   watchEvent(view) {
     if (view.type === 'eclipse') return this.watchEclipse(view.eclipse);
