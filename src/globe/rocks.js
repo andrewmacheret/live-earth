@@ -9,6 +9,9 @@ const FAST_UPDATE_MS = 50;
 const ORBIT_POINTS = 512;
 
 const SIZES = { dwarf: 5, comet: 2.6, hazardous: 1.8, neo: 2, main: 2 };
+// dots in each comet's tail
+const TAIL_POINTS = 20;
+const TAILED = new Set(['comet', 'interstellar']);
 
 const vertex = /* glsl */ `
   attribute vec3 aColor;
@@ -29,6 +32,66 @@ const fragment = /* glsl */ `
     float d = length(gl_PointCoord - 0.5) * 2.0;
     if (d > 1.0) discard;
     gl_FragColor = vec4(vColor * smoothstep(1.0, 0.4, d) * uOpacity, 1.0);
+    #include <colorspace_fragment>
+  }
+`;
+
+// A comet's tail points away from the Sun and grows as it gets closer, about 0.3 AU long at the
+// Earth's distance. It's gone past about 5 AU, where the Sun is too weak to boil off any gas.
+export function tailLength(r) {
+  return r > 5 ? 0 : Math.min(0.8, 0.3 / (r * r)) * (1 - THREE.MathUtils.smoothstep(r, 3.5, 5));
+}
+
+const tailVertex = /* glsl */ `
+  attribute float aAlong;
+  attribute float aGlow;
+  uniform float uScale;
+  varying float vAlpha;
+  void main() {
+    vAlpha = aGlow * pow(1.0 - aAlong, 1.6) * 0.6;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = mix(3.2, 1.4, aAlong) * uScale * step(0.001, aGlow);
+  }
+`;
+
+const tailFragment = /* glsl */ `
+  uniform float uOpacity;
+  varying float vAlpha;
+  void main() {
+    float d = length(gl_PointCoord - 0.5) * 2.0;
+    if (d > 1.0) discard;
+    gl_FragColor = vec4(vec3(0.62, 0.82, 1.0) * (1.0 - d) * vAlpha * uOpacity, 1.0);
+    #include <colorspace_fragment>
+  }
+`;
+
+// Up close the dots spread apart, so each tail also gets two crossed flat wedges that fade out
+// toward the end and the edges. One of the two always faces the camera enough to see.
+const wedgeVertex = /* glsl */ `
+  attribute float aAlong;
+  attribute float aAcross;
+  attribute float aGlow;
+  varying float vAlong;
+  varying float vAcross;
+  varying float vGlow;
+  void main() {
+    vAlong = aAlong;
+    vAcross = aAcross;
+    vGlow = aGlow;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  }
+`;
+
+const wedgeFragment = /* glsl */ `
+  uniform float uOpacity;
+  varying float vAlong;
+  varying float vAcross;
+  varying float vGlow;
+  void main() {
+    // how far from the middle line to the edge, 0 to 1
+    float edge = abs(vAcross) / max(vAlong, 0.001);
+    float a = vGlow * pow(1.0 - vAlong, 1.4) * (1.0 - edge * edge) * 0.16;
+    gl_FragColor = vec4(vec3(0.62, 0.82, 1.0) * a * uOpacity, 1.0);
     #include <colorspace_fragment>
   }
 `;
@@ -82,8 +145,116 @@ export function createRocks(records) {
   line.frustumCulled = false;
   line.visible = false;
 
+  // comet tails, as rows of fading dots that fan out a little
+  const comets = records.flatMap((record, k) => (TAILED.has(record.kind) ? [k] : []));
+  const tailPositions = new Float32Array(comets.length * TAIL_POINTS * 3);
+  const along = new Float32Array(comets.length * TAIL_POINTS);
+  const glow = new Float32Array(comets.length * TAIL_POINTS);
+  // each dot's fixed sideways offset, so the tail looks fuzzy instead of a line
+  const spread = new Float32Array(comets.length * TAIL_POINTS * 2);
+  let seed = 7;
+  const random = () => ((seed = (seed * 16807) % 2147483647) / 2147483647) * 2 - 1;
+  for (let i = 0; i < comets.length * TAIL_POINTS; i++) {
+    along[i] = (i % TAIL_POINTS) / TAIL_POINTS;
+    spread[i * 2] = random();
+    spread[i * 2 + 1] = random();
+  }
+  const tailGeometry = new THREE.BufferGeometry()
+    .setAttribute('position', new THREE.BufferAttribute(tailPositions, 3))
+    .setAttribute('aAlong', new THREE.BufferAttribute(along, 1))
+    .setAttribute('aGlow', new THREE.BufferAttribute(glow, 1));
+  const tails = new THREE.Points(
+    tailGeometry,
+    new THREE.ShaderMaterial({
+      vertexShader: tailVertex,
+      fragmentShader: tailFragment,
+      uniforms: { uScale: { value: 1 }, uOpacity: { value: 0 } },
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false
+    })
+  );
+  tails.frustumCulled = false;
+
+  // each wedge is a triangle from the comet to both sides of the tail's end
+  const wedgePositions = new Float32Array(comets.length * 6 * 3);
+  const wedgeAlong = new Float32Array(comets.length * 6);
+  const wedgeAcross = new Float32Array(comets.length * 6);
+  const wedgeGlow = new Float32Array(comets.length * 6);
+  for (let c = 0; c < comets.length; c++) {
+    wedgeAlong.set([0, 1, 1, 0, 1, 1], c * 6);
+    wedgeAcross.set([0, -1, 1, 0, -1, 1], c * 6);
+  }
+  const wedgeGeometry = new THREE.BufferGeometry()
+    .setAttribute('position', new THREE.BufferAttribute(wedgePositions, 3))
+    .setAttribute('aAlong', new THREE.BufferAttribute(wedgeAlong, 1))
+    .setAttribute('aAcross', new THREE.BufferAttribute(wedgeAcross, 1))
+    .setAttribute('aGlow', new THREE.BufferAttribute(wedgeGlow, 1));
+  const wedges = new THREE.Mesh(
+    wedgeGeometry,
+    new THREE.ShaderMaterial({
+      vertexShader: wedgeVertex,
+      fragmentShader: wedgeFragment,
+      uniforms: { uOpacity: { value: 0 } },
+      blending: THREE.AdditiveBlending,
+      transparent: true,
+      depthWrite: false,
+      side: THREE.DoubleSide
+    })
+  );
+  wedges.frustumCulled = false;
+
+  const away = new THREE.Vector3();
+  const side = new THREE.Vector3();
+  const up = new THREE.Vector3();
+  const placeTails = () => {
+    comets.forEach((k, c) => {
+      away.set(positions[k * 3], positions[k * 3 + 1], positions[k * 3 + 2]);
+      const r = away.length();
+      // before the first solve every rock sits at 0, which has no "away from the Sun"
+      const length = sizes[k] && r > 0 ? tailLength(r) : 0;
+      const start = c * TAIL_POINTS;
+      const brightness = length > 0 ? Math.min(1, length / 0.05) : 0;
+      glow.fill(brightness, start, start + TAIL_POINTS);
+      wedgeGlow.fill(brightness, c * 6, c * 6 + 6);
+      if (!length) return;
+      away.divideScalar(r);
+      side.set(-away.y, away.x, 0);
+      // straight above or below the Sun, any sideways direction works
+      if (side.lengthSq() < 1e-12) side.set(1, 0, 0);
+      side.normalize();
+      up.crossVectors(away, side);
+      for (let i = 0; i < TAIL_POINTS; i++) {
+        const j = start + i;
+        const t = along[j] * length;
+        const fan = t * 0.12;
+        tailPositions[j * 3] = positions[k * 3] + away.x * t + (side.x * spread[j * 2] + up.x * spread[j * 2 + 1]) * fan;
+        tailPositions[j * 3 + 1] = positions[k * 3 + 1] + away.y * t + (side.y * spread[j * 2] + up.y * spread[j * 2 + 1]) * fan;
+        tailPositions[j * 3 + 2] = positions[k * 3 + 2] + away.z * t + (side.z * spread[j * 2] + up.z * spread[j * 2 + 1]) * fan;
+      }
+      const w = length * 0.08;
+      const hx = positions[k * 3];
+      const hy = positions[k * 3 + 1];
+      const hz = positions[k * 3 + 2];
+      const ex = hx + away.x * length;
+      const ey = hy + away.y * length;
+      const ez = hz + away.z * length;
+      wedgePositions.set(
+        [
+          hx, hy, hz, ex - side.x * w, ey - side.y * w, ez - side.z * w, ex + side.x * w, ey + side.y * w, ez + side.z * w,
+          hx, hy, hz, ex - up.x * w, ey - up.y * w, ez - up.z * w, ex + up.x * w, ey + up.y * w, ez + up.z * w
+        ],
+        c * 18
+      );
+    });
+    tailGeometry.attributes.position.needsUpdate = true;
+    tailGeometry.attributes.aGlow.needsUpdate = true;
+    wedgeGeometry.attributes.position.needsUpdate = true;
+    wedgeGeometry.attributes.aGlow.needsUpdate = true;
+  };
+
   const group = new THREE.Group();
-  group.add(points, line);
+  group.add(wedges, tails, points, line);
 
   let solvedAt = -Infinity;
   let solvedFor = null;
@@ -120,6 +291,7 @@ export function createRocks(records) {
       }
       solvedFor = jd;
       geometry.attributes.position.needsUpdate = true;
+      placeTails();
     },
 
     // where rock k is, in AU from the Sun
@@ -144,6 +316,7 @@ export function createRocks(records) {
       hiddenKinds = kinds;
       records.forEach((record, k) => (sizes[k] = kinds.has(record.kind) ? 0 : baseSizes[k]));
       geometry.attributes.aSize.needsUpdate = true;
+      placeTails();
     },
 
     shown(k) {
@@ -153,6 +326,9 @@ export function createRocks(records) {
     style(opacity, pixelRatio) {
       points.material.uniforms.uOpacity.value = opacity;
       points.material.uniforms.uScale.value = pixelRatio;
+      tails.material.uniforms.uOpacity.value = opacity;
+      tails.material.uniforms.uScale.value = pixelRatio;
+      wedges.material.uniforms.uOpacity.value = opacity;
       group.visible = opacity > 0;
     },
 
@@ -182,6 +358,10 @@ export function createRocks(records) {
       points.material.dispose();
       line.geometry.dispose();
       line.material.dispose();
+      tailGeometry.dispose();
+      tails.material.dispose();
+      wedgeGeometry.dispose();
+      wedges.material.dispose();
     }
   };
 }
