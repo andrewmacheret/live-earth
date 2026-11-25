@@ -251,6 +251,8 @@ export class Globe {
     const up = new THREE.Vector3(0, 0.3, 0);
     if (id === 'sun') return toEarth.add(up).normalize();
     const toSun = this.solar.positionOf('sun', new THREE.Vector3()).sub(at).normalize();
+    // look down on a meteor shower from above the planets, so its stream crosses the Earth's orbit in view
+    if (id.startsWith('shower:')) return this.eclipticNorth().add(toSun.multiplyScalar(0.4)).normalize();
     return toSun.add(toEarth.multiplyScalar(0.7)).add(up).normalize();
   }
 
@@ -292,10 +294,15 @@ export class Globe {
     this.callbacks.onAnchor?.(id);
   }
 
+  // straight up from the plane the planets orbit in
+  eclipticNorth() {
+    const { x, y, z } = ECLIPTIC_NORTH;
+    return new THREE.Vector3(...sceneFrame(new Date(this.simNow()))(x, y, z, [0, 0, 0], 0, 1));
+  }
+
   // Fly out over the Sun until the inner planets fit, looking down on the plane they orbit in.
   showSolarSystem() {
-    const { x, y, z } = ECLIPTIC_NORTH;
-    const north = new THREE.Vector3(...sceneFrame(new Date(this.simNow()))(x, y, z, [0, 0, 0], 0, 1));
+    const north = this.eclipticNorth();
     this.goTo('sun', {
       distance: 3.2 * AU,
       // tipped toward the Earth, so it sits near the bottom of the view
@@ -306,7 +313,8 @@ export class Globe {
     });
   }
 
-  // Select the Sun, the Moon, a planet, a rock (like 'rock:433') or a spacecraft (like 'craft:voyager-1') by id, or pass null.
+  // Select the Sun, the Moon, a planet, a rock (like 'rock:433'), a spacecraft (like 'craft:voyager-1')
+  // or a meteor shower (like 'shower:perseids') by id, or pass null.
   selectBody(id) {
     if (id && (this.selected >= 0 || this.selectedPlane)) this.select(-1);
     this.selectedBody = id;
@@ -326,6 +334,8 @@ export class Globe {
     if (craft) return { type: 'craft', id, anchored, ...craft };
     const moon = this.solar.moonFacts(id);
     if (moon) return { type: 'moon', id, anchored, ...moon };
+    const shower = this.solar.showerFacts(id, date);
+    if (shower) return { type: 'shower', id, anchored, ...shower };
     return { type: 'body', id, anchored, ...bodyFacts(id, date, this.solar.positions() ?? undefined) };
   }
 
@@ -352,6 +362,10 @@ export class Globe {
 
   setCraftsHidden(hide) {
     this.solar.setCraftsHidden(hide);
+  }
+
+  setShowersHidden(hide) {
+    this.solar.setShowersHidden(hide);
   }
 
   updateBodySelection(date) {

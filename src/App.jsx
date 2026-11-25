@@ -8,6 +8,7 @@ import { BODIES, BODY_BY_ID, nasaLink } from './space/bodies.js';
 import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodies.js';
 import { fromCompactMoons } from './space/moons.js';
 import { CRAFT_COLOR, fromCompactSpacecraft } from './space/spacecraft.js';
+import { PARENT_BY_ID, peakLabel, SHOWERS } from './space/meteors.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
@@ -133,11 +134,13 @@ export default function App() {
         setCatalog({ records, counts, launches, recent, wiki, withArticles, indexById, generated: data.generated });
         const params = new URLSearchParams(location.search);
         const wanted = Number(params.get('sat'));
-        const body = BODY_BY_ID[params.get('body')];
+        const linked = params.get('body');
+        // meteor showers are built in, so like planets they don't wait for anything to load
+        const body = BODY_BY_ID[linked]?.id ?? (linked?.startsWith('shower:') && globe.solar.has(linked) ? linked : null);
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
         if (start < 0 && body) {
-          globe.selectBody(body.id);
-          if (body.id !== 'earth') globe.goTo(body.id);
+          globe.selectBody(body);
+          if (body !== 'earth') globe.goTo(body);
           return;
         }
         if (start < 0 && /^(rock|craft|moon):/.test(params.get('body'))) return loadSpaceRef.current();
@@ -206,7 +209,8 @@ export default function App() {
   const isRock = info?.type === 'rock';
   const isCraft = info?.type === 'craft';
   const isMoon = info?.type === 'moon';
-  const bodyId = info?.type === 'body' || isRock || isCraft || isMoon ? info.id : null;
+  const isShower = info?.type === 'shower';
+  const bodyId = info?.type === 'body' || isRock || isCraft || isMoon || isShower ? info.id : null;
   const isSat = !!info && !info.type;
   const selectionKey = info ? (isPlane ? `plane ${info.icao}` : bodyId ? `body ${bodyId}` : `sat ${info.noradId}`) : null;
   // open the full panel again whenever something new is picked
@@ -228,7 +232,15 @@ export default function App() {
     return true;
   };
   const selectedRecord = isSat ? catalog?.records[info.index] : null;
-  const rockArticle = isRock ? info.article : isCraft ? info.craft.article : isMoon ? info.moon.article : null;
+  const rockArticle = isRock
+    ? info.article
+    : isCraft
+      ? info.craft.article
+      : isMoon
+        ? info.moon.article
+        : isShower
+          ? info.shower.article
+          : null;
   const article = useMemo(() => {
     if (bodyId) {
       const title = BODY_BY_ID[bodyId]?.article ?? rockArticle;
@@ -314,6 +326,7 @@ export default function App() {
     globeRef.current.setRocksHidden(new Set(KINDS.filter(kind => next.has(`rock:${kind.id}`)).map(kind => kind.id)));
     globeRef.current.setCraftsHidden(next.has('craft'));
     globeRef.current.setMoonsHidden(next.has('moons'));
+    globeRef.current.setShowersHidden(next.has('showers'));
   };
 
   const toggleCategory = id => {
@@ -326,7 +339,7 @@ export default function App() {
   // Show all and Hide all only change the tab you're looking at
   const tabIds =
     legendTab === 'space'
-      ? ['moons', 'craft', ...KINDS.map(kind => `rock:${kind.id}`)]
+      ? ['moons', 'craft', 'showers', ...KINDS.map(kind => `rock:${kind.id}`)]
       : [...CATEGORIES.map(c => c.id), 'planes'];
   const tabHidden = tabIds.some(id => hidden.has(id));
   const toggleAll = () => {
@@ -480,6 +493,15 @@ export default function App() {
                   <span className="count">{number.format(crafts.list.length)}</span>
                 </button>
               )}
+              <button
+                className={hidden.has('showers') ? 'off' : ''}
+                onClick={() => toggleCategory('showers')}
+                aria-pressed={!hidden.has('showers')}
+              >
+                <span className="swatch" style={{ background: PARENT_BY_ID['swift-tuttle'].color }} />
+                Meteor showers
+                <span className="count">{SHOWERS.length}</span>
+              </button>
               {rocks &&
                 KINDS.filter(kind => rocks.counts[kind.id]).map(kind => (
                   <button
@@ -629,7 +651,16 @@ export default function App() {
         />
       )}
 
-      {bodyId && !isRock && !isCraft && !isMoon && !showBar && (
+      {isShower && !showBar && (
+        <ShowerPanel
+          info={info}
+          summary={summary}
+          onGo={() => globeRef.current.goTo(info.anchored ? 'earth' : bodyId)}
+          onClose={closePanel}
+        />
+      )}
+
+      {bodyId && !isRock && !isCraft && !isMoon && !isShower && !showBar && (
         <BodyPanel
           info={info}
           summary={summary}
@@ -715,6 +746,11 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
       const name = moon.name.toUpperCase();
       if (name.includes(q)) out.push({ rank: name.startsWith(q) ? -1.5 : -0.8, type: 'moon', index: i });
     });
+    // meteor showers like the Perseids
+    SHOWERS.forEach((shower, i) => {
+      const name = shower.name.toUpperCase();
+      if (name.includes(q)) out.push({ rank: name.startsWith(q) ? -0.95 : 0.3, type: 'shower', index: i });
+    });
     // spacecraft like Voyager go right after the planets and moons
     crafts.forEach((craft, i) => {
       const names = [craft.name, craft.short ?? ''].map(name => name.toUpperCase());
@@ -762,6 +798,7 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
     else if (item.type === 'rock') onPickBody(`rock:${rocks[item.index].pdes}`);
     else if (item.type === 'craft') onPickBody(`craft:${crafts[item.index].id}`);
     else if (item.type === 'moon') onPickBody(`moon:${moons[item.index].id}`);
+    else if (item.type === 'shower') onPickBody(`shower:${SHOWERS[item.index].id}`);
     else onPick(item.index);
     setQuery('');
     inputRef.current.blur();
@@ -813,6 +850,16 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
                     {moons[item.index].name}
                   </span>
                   <span className="count">Moon of {BODY_BY_ID[moons[item.index].planet].name}</span>
+                </button>
+              </li>
+            ) : item.type === 'shower' ? (
+              <li key={`shower ${item.index}`}>
+                <button onClick={() => pick(item)}>
+                  <span>
+                    <span className="body-swatch" style={{ background: PARENT_BY_ID[SHOWERS[item.index].parent].color }} />
+                    {SHOWERS[item.index].name}
+                  </span>
+                  <span className="count">Meteor shower · {peakLabel(SHOWERS[item.index])}</span>
                 </button>
               </li>
             ) : item.type === 'craft' ? (
@@ -1092,6 +1139,45 @@ function MoonPanel({ info, summary, onGo, onClose }) {
   );
 }
 
+function ShowerPanel({ info, summary, onGo, onClose }) {
+  const { shower, parent } = info;
+  const when = info.peak.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  return (
+    <aside className="panel top-right info">
+      <button className="close" onClick={onClose} aria-label="Close">
+        ×
+      </button>
+      <div className="kind" style={{ color: info.color }}>
+        Meteor shower
+      </div>
+      <h2>{shower.name}</h2>
+      <p className="ids">Comes from the direction of {shower.radiant}</p>
+      <dl>
+        <dt>Next peak</dt>
+        <dd>
+          {when}
+          <span className="muted"> ({info.daysToPeak === 0 ? 'today' : info.daysToPeak === 1 ? 'tomorrow' : `in ${info.daysToPeak} days`})</span>
+        </dd>
+        <dt>At its best</dt>
+        <dd>
+          about {shower.zhr} meteors an hour <span className="muted">(under a perfectly dark sky)</span>
+        </dd>
+        <dt>Speed</dt>
+        <dd>{shower.speedKmS} km/s into the air</dd>
+        <dt>Dust from</dt>
+        <dd>{parent.name}</dd>
+      </dl>
+      <p className="note">{shower.note}</p>
+      <div className="actions">
+        <button className="follow" onClick={onGo}>
+          {info.anchored ? 'Back to Earth' : `Go to the ${shower.name}`}
+        </button>
+      </div>
+      <About summary={summary} links={[]} />
+    </aside>
+  );
+}
+
 function CraftPanel({ info, summary, onGo, onClose }) {
   const { craft } = info;
   return (
@@ -1143,6 +1229,7 @@ function SelectionBar({ info, onExpand, onClose }) {
   const isRock = info.type === 'rock';
   const isCraft = info.type === 'craft';
   const isMoon = info.type === 'moon';
+  const isShower = info.type === 'shower';
   const body = info.type === 'body' ? BODY_BY_ID[info.id] : null;
   const category = info.type ? null : CATEGORY_BY_ID[info.category];
   const name = isPlane ? info.callsign || info.icao.toUpperCase() : body ? titleName(body) : info.name;
@@ -1156,7 +1243,9 @@ function SelectionBar({ info, onExpand, onClose }) {
           ? 'Spacecraft'
           : isMoon
             ? info.kind
-            : category.label;
+            : isShower
+              ? 'Meteor shower'
+              : category.label;
   return (
     <aside className="panel top-right selection-bar">
       <button className="expand" onClick={onExpand} aria-expanded="false" aria-label={`Show details for ${name}`}>
@@ -1165,7 +1254,7 @@ function SelectionBar({ info, onExpand, onClose }) {
           style={{
             color:
               body?.color ??
-              (isRock ? info.kind.color : isCraft ? CRAFT_COLOR : isMoon ? info.moon.color : category?.color) ??
+              (isRock ? info.kind.color : isCraft ? CRAFT_COLOR : isMoon ? info.moon.color : isShower ? info.color : category?.color) ??
               '#fff'
           }}
         >

@@ -13,7 +13,7 @@ import {
   sizeFromH
 } from '../space/smallBodies.js';
 import { CHARON_PULL, moonOffset, moonPath, moonPeriod } from '../space/moons.js';
-import { PARENT_BY_ID, PARENTS, peakLabel, SHOWERS, showerSpot, streamPoints } from '../space/meteors.js';
+import { nextPeak, PARENT_BY_ID, PARENTS, peakLabel, SHOWER_BY_ID, SHOWERS, showerSpot, streamPoints } from '../space/meteors.js';
 import { CRAFT_COLOR, craftPath, craftPosition, craftSpeed } from '../space/spacecraft.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
 import { createRocks } from './rocks.js';
@@ -176,23 +176,29 @@ function bubble({ noseAu, stretch, color }, nose) {
 }
 
 // meteor stream dust: tiny round dots in each parent's color
+// stream is which parent each dot belongs to. A picked stream gets brighter and the rest dim.
 const streamVertex = /* glsl */ `
   attribute vec3 color;
+  attribute float stream;
   uniform float uSize;
+  uniform float uSelected;
   varying vec3 vColor;
+  varying float vBoost;
   void main() {
     vColor = color;
+    vBoost = uSelected < 0.0 ? 1.0 : abs(stream - uSelected) < 0.5 ? 2.5 : 0.3;
     gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = uSize;
+    gl_PointSize = uSize * (vBoost > 1.0 ? 2.0 : 1.0);
   }
 `;
 const streamFragment = /* glsl */ `
   uniform float uOpacity;
   varying vec3 vColor;
+  varying float vBoost;
   void main() {
     float d = length(gl_PointCoord - 0.5) * 2.0;
     if (d > 1.0) discard;
-    gl_FragColor = vec4(vColor * (1.0 - d) * uOpacity, 1.0);
+    gl_FragColor = vec4(vColor * (1.0 - d) * uOpacity * vBoost, 1.0);
   }
 `;
 const STREAM_POINTS = 900;
@@ -496,9 +502,9 @@ export function createSolarSystem(container, { onPick }) {
     if (item.ring && !item.body.rings.bands) loadInto(`${item.body.id}_ring.png`, item.ring);
   };
 
-  // Lagrange points, the heliosphere and meteor showers are just marks with names, and can't be picked
-  const mark = (className, text, color) => {
-    const label = document.createElement('div');
+  // Lagrange points and the heliosphere are just marks with names, and can't be picked. Meteor showers can.
+  const mark = (className, text, color, tag = 'div') => {
+    const label = document.createElement(tag);
     label.className = className;
     label.textContent = text;
     if (color) label.style.color = color;
@@ -522,20 +528,23 @@ export function createSolarSystem(container, { onPick }) {
   const streams = (() => {
     const positions = new Float32Array(PARENTS.length * STREAM_POINTS * 3);
     const colors = new Float32Array(PARENTS.length * STREAM_POINTS * 3);
+    const which = new Float32Array(PARENTS.length * STREAM_POINTS);
     PARENTS.forEach((parent, j) => {
       positions.set(streamPoints(parent, STREAM_POINTS, j + 1), j * STREAM_POINTS * 3);
       const c = new THREE.Color(parent.color);
       for (let k = 0; k < STREAM_POINTS; k++) colors.set([c.r, c.g, c.b], (j * STREAM_POINTS + k) * 3);
+      which.fill(j, j * STREAM_POINTS, (j + 1) * STREAM_POINTS);
     });
     const geometry = new THREE.BufferGeometry()
       .setAttribute('position', new THREE.BufferAttribute(positions, 3))
-      .setAttribute('color', new THREE.BufferAttribute(colors, 3));
+      .setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      .setAttribute('stream', new THREE.BufferAttribute(which, 1));
     const points = new THREE.Points(
       geometry,
       new THREE.ShaderMaterial({
         vertexShader: streamVertex,
         fragmentShader: streamFragment,
-        uniforms: { uSize: { value: 2 }, uOpacity: { value: 0 } },
+        uniforms: { uSize: { value: 2 }, uOpacity: { value: 0 }, uSelected: { value: -1 } },
         transparent: true,
         blending: THREE.AdditiveBlending,
         depthWrite: false
@@ -546,12 +555,17 @@ export function createSolarSystem(container, { onPick }) {
     return points;
   })();
   let streamOpacity = 0;
-  // each shower's name goes where the Earth meets its stream at the peak
+  let showersShown = true;
+  let selectedShower = null;
+  // each shower's name goes where the Earth meets its stream at the peak, and picks it when clicked
   const showers = SHOWERS.map(shower => {
     const spot = showerSpot(shower);
-    const item = mark('shower-mark', `${shower.name} · ${peakLabel(shower)}`, PARENT_BY_ID[shower.parent].color);
-    return { ...item, local: new THREE.Vector3(spot.x, spot.y, spot.z) };
+    const item = mark('shower-mark', `${shower.name} · ${peakLabel(shower)}`, PARENT_BY_ID[shower.parent].color, 'button');
+    item.label.addEventListener('click', () => onPick?.(`shower:${shower.id}`));
+    return { ...item, shower, local: new THREE.Vector3(spot.x, spot.y, spot.z) };
   });
+  const showerById = new Map(showers.map(item => [item.shower.id, item]));
+  const showerItem = id => (id?.startsWith('shower:') ? showerById.get(id.slice(7)) : undefined);
 
   let positions = null;
   const point = new THREE.Vector3();
@@ -588,12 +602,14 @@ export function createSolarSystem(container, { onPick }) {
     // 'rock:' and a JPL designation like 'rock:433' or 'rock:1P',
     // or 'craft:' and a spacecraft id from spacecraft.js like 'craft:voyager-1'
     has(id) {
-      return !!byId[id] || rockIndex(id) >= 0 || !!craftItem(id);
+      return !!byId[id] || rockIndex(id) >= 0 || !!craftItem(id) || !!showerItem(id);
     },
 
     positionOf(id, out) {
       const k = rockIndex(id);
       if (k >= 0) return rockAt(k, out);
+      const shower = showerItem(id);
+      if (shower) return out.copy(shower.position);
       return out.copy((craftItem(id) ?? byId[id]).holder.position);
     },
 
@@ -601,12 +617,14 @@ export function createSolarSystem(container, { onPick }) {
       const k = rockIndex(id);
       if (k >= 0) return rockRadius(rocks.records[k]);
       // spacecraft are a few meters across, but the camera still needs room to stop
-      return craftItem(id) ? 0.001 : byId[id].radius;
+      return craftItem(id) || showerItem(id) ? 0.001 : byId[id].radius;
     },
 
     // how far away Go to stops: rocks and spacecraft are tiny, so back off enough to see the neighborhood.
     // Webb stays near the Earth, so closer in for it.
     viewDistanceOf(id) {
+      // a shower stops back far enough to see a good stretch of its stream
+      if (showerItem(id)) return 1.2 * AU;
       const craft = craftItem(id)?.craft;
       // a craft circling a planet stops far enough out to see its whole orbit
       if (craft?.ellipse && craft.center !== 'sun') return craft.ellipse.a * (1 + craft.ellipse.e) * 3 * AU;
@@ -616,19 +634,41 @@ export function createSolarSystem(container, { onPick }) {
 
     // how wide the body looks on screen, in pixels
     screenPxOf(id) {
-      return rockIndex(id) >= 0 || craftItem(id) ? 0 : byId[id].screenPx;
+      return rockIndex(id) >= 0 || craftItem(id) || showerItem(id) ? 0 : byId[id].screenPx;
     },
 
     colorOf(id) {
       const k = rockIndex(id);
       if (k >= 0) return KIND_BY_ID[rocks.records[k].kind].color;
+      const shower = showerItem(id);
+      if (shower) return PARENT_BY_ID[shower.shower.parent].color;
       return craftItem(id) ? CRAFT_COLOR : byId[id].body.color;
     },
 
     nameOf(id) {
       const k = rockIndex(id);
       if (k >= 0) return rocks.records[k].name;
-      return craftItem(id)?.craft.name ?? byId[id].body.name;
+      return craftItem(id)?.craft.name ?? showerItem(id)?.shower.name ?? byId[id].body.name;
+    },
+
+    setShowersHidden(hide) {
+      showersShown = !hide;
+    },
+
+    // Facts for the info panel about a meteor shower
+    showerFacts(id, date) {
+      const item = showerItem(id);
+      if (!item) return null;
+      const { shower } = item;
+      const peak = nextPeak(shower, date);
+      return {
+        name: shower.name,
+        shower,
+        parent: PARENT_BY_ID[shower.parent],
+        color: PARENT_BY_ID[shower.parent].color,
+        peak,
+        daysToPeak: Math.max(0, Math.ceil((peak.getTime() - date.getTime()) / 86400000))
+      };
     },
 
     // list comes from fromCompactMoons in moons.js
@@ -784,6 +824,8 @@ export function createSolarSystem(container, { onPick }) {
     // highlight a rock's orbit or a spacecraft's path, or pass anything else to clear them
     selectSmall(id) {
       rocks?.select(rockIndex(id));
+      selectedShower = showerItem(id) ?? null;
+      streams.material.uniforms.uSelected.value = selectedShower ? PARENTS.indexOf(PARENT_BY_ID[selectedShower.shower.parent]) : -1;
       selectedCraft = craftItem(id) ?? null;
       craftLine.visible = !!selectedCraft;
       craftLineTime = null;
@@ -952,8 +994,11 @@ export function createSolarSystem(container, { onPick }) {
         mesh.visible = heliosphereOpacity > 0;
         mesh.material.uniforms.uOpacity.value = heliosphereOpacity;
       }
-      streamOpacity =
-        THREE.MathUtils.smoothstep(earthDistance, 0.15 * AU, 0.6 * AU) * (1 - THREE.MathUtils.smoothstep(earthDistance, 15 * AU, 40 * AU));
+      streamOpacity = showersShown
+        ? THREE.MathUtils.smoothstep(earthDistance, 0.15 * AU, 0.6 * AU) * (1 - THREE.MathUtils.smoothstep(earthDistance, 15 * AU, 40 * AU))
+        : 0;
+      // a picked shower stays visible, even when the rest are hidden
+      if (selectedShower) streamOpacity = Math.max(streamOpacity, 0.8);
       streams.visible = streamOpacity > 0;
       streams.material.uniforms.uOpacity.value = 0.55 * streamOpacity;
       streams.material.uniforms.uSize.value = 2 * pixelRatio;
@@ -997,6 +1042,30 @@ export function createSolarSystem(container, { onPick }) {
 
       project(camera, width, height);
       const placed = [];
+      // Marks with names that aren't bodies, like meteor showers and Lagrange points. Lagrange points
+      // show once they're far enough on screen from both of their bodies.
+      const lagrangeApart = item =>
+        Math.min(
+          ...item.between.map(id => (byId[id].screen ? Math.hypot(byId[id].screen.x - item.screen.x, byId[id].screen.y - item.screen.y) : Infinity))
+        ) > 24;
+      const placeMarks = (list, visible, check = () => true) => {
+        for (const item of list) {
+          const { label, position } = item;
+          let show = visible && !!projectOne(item, position, camera, width, height);
+          if (show) show = check(item) && !behindEarth(camera.position, position) && !hidden(item);
+          let x = 0;
+          let y = 0;
+          if (show) {
+            x = item.screen.x - 4;
+            y = item.screen.y - 8;
+            const box = { left: x + 8, right: x + 12 + label.textContent.length * 5.5, top: y, bottom: y + 16 };
+            show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+            if (show) placed.push(box);
+          }
+          if (label.hidden === show) label.hidden = !show;
+          if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+        }
+      };
       for (const id of labelOrder) {
         const item = byId[id];
         const { label, holder } = item;
@@ -1018,6 +1087,13 @@ export function createSolarSystem(container, { onPick }) {
         if (label.hidden === show) label.hidden = !show;
         if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       }
+
+      // then meteor showers, the picked one first
+      placeMarks(selectedShower ? [selectedShower] : [], true);
+      placeMarks(
+        showers.filter(item => item !== selectedShower),
+        showersShown && streamOpacity > 0.5
+      );
 
       // then spacecraft
       for (const item of crafts) {
@@ -1065,31 +1141,6 @@ export function createSolarSystem(container, { onPick }) {
         if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       }
 
-      // Then the marks that can't be picked. Lagrange points show once they're far enough on screen
-      // from both of their bodies.
-      const lagrangeApart = item =>
-        Math.min(
-          ...item.between.map(id => (byId[id].screen ? Math.hypot(byId[id].screen.x - item.screen.x, byId[id].screen.y - item.screen.y) : Infinity))
-        ) > 24;
-      const placeMarks = (list, visible, check = () => true) => {
-        for (const item of list) {
-          const { label, position } = item;
-          let show = visible && !!projectOne(item, position, camera, width, height);
-          if (show) show = check(item) && !behindEarth(camera.position, position) && !hidden(item);
-          let x = 0;
-          let y = 0;
-          if (show) {
-            x = item.screen.x - 4;
-            y = item.screen.y - 8;
-            const box = { left: x + 8, right: x + 12 + label.textContent.length * 5.5, top: y, bottom: y + 16 };
-            show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
-            if (show) placed.push(box);
-          }
-          if (label.hidden === show) label.hidden = !show;
-          if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-        }
-      };
-      placeMarks(showers, streamOpacity > 0.5);
       placeMarks(lagrange, true, lagrangeApart);
       placeMarks(heliosphere, heliosphereOpacity > 0.5);
     },
@@ -1115,6 +1166,11 @@ export function createSolarSystem(container, { onPick }) {
         }
         if (hidden(item)) continue;
         out.push({ id: `craft:${item.craft.id}`, ...item.screen, radiusPx: 0, position: item.holder.position });
+      }
+      // a meteor shower can be picked where its name is showing
+      for (const item of showers) {
+        if (item.label.hidden || !item.screen) continue;
+        out.push({ id: `shower:${item.shower.id}`, ...item.screen, radiusPx: 0, position: item.position });
       }
       return out;
     },

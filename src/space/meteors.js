@@ -1,6 +1,8 @@
 // Meteor showers happen when the Earth plows through dust that a comet (or an asteroid) left along its orbit.
 // Each parent's orbit is from JPL's Small-Body Database (angles in degrees against the planets' plane, in AU).
-// peak is the usual day of the shower's peak, as [month, day].
+// peak is the usual day of the shower's peak, as [month, day]. zhr is about how many meteors an hour you'd
+// see at the peak under a perfectly dark sky, speedKmS is how fast they hit the air, and radiant is the
+// constellation they seem to come from.
 import { Body, HelioVector } from 'astronomy-engine';
 import { orbitOf, pointAt } from './smallBodies.js';
 
@@ -18,17 +20,58 @@ export const PARENTS = [
 export const PARENT_BY_ID = Object.fromEntries(PARENTS.map(parent => [parent.id, parent]));
 
 export const SHOWERS = [
-  { id: 'quadrantids', name: 'Quadrantids', parent: '2003-eh1', peak: [1, 3] },
-  { id: 'lyrids', name: 'Lyrids', parent: 'thatcher', peak: [4, 22] },
-  { id: 'eta-aquariids', name: 'Eta Aquariids', parent: 'halley', peak: [5, 6] },
-  { id: 'perseids', name: 'Perseids', parent: 'swift-tuttle', peak: [8, 12] },
-  { id: 'draconids', name: 'Draconids', parent: 'giacobini-zinner', peak: [10, 8] },
-  { id: 'orionids', name: 'Orionids', parent: 'halley', peak: [10, 21] },
-  { id: 'taurids', name: 'Taurids', parent: 'encke', peak: [11, 5] },
-  { id: 'leonids', name: 'Leonids', parent: 'tempel-tuttle', peak: [11, 17] },
-  { id: 'geminids', name: 'Geminids', parent: 'phaethon', peak: [12, 14] },
-  { id: 'ursids', name: 'Ursids', parent: 'tuttle', peak: [12, 22] }
+  {
+    id: 'quadrantids',
+    name: 'Quadrantids',
+    parent: '2003-eh1',
+    peak: [1, 3],
+    zhr: 110,
+    speedKmS: 41,
+    radiant: 'Boötes',
+    article: 'Quadrantids',
+    note: 'Strong but short: the best hours last only about half a day.'
+  },
+  { id: 'lyrids', name: 'Lyrids', parent: 'thatcher', peak: [4, 22], zhr: 18, speedKmS: 49, radiant: 'Lyra', article: 'Lyrids', note: 'Seen for over 2,700 years, the oldest recorded shower.' },
+  {
+    id: 'eta-aquariids',
+    name: 'Eta Aquariids',
+    parent: 'halley',
+    peak: [5, 6],
+    zhr: 50,
+    speedKmS: 66,
+    radiant: 'Aquarius',
+    article: 'Eta Aquariids',
+    note: "Dust from Halley's Comet, best seen from the Southern Hemisphere."
+  },
+  { id: 'perseids', name: 'Perseids', parent: 'swift-tuttle', peak: [8, 12], zhr: 100, speedKmS: 59, radiant: 'Perseus', article: 'Perseids', note: 'The favorite summer shower in the north, with lots of bright meteors.' },
+  {
+    id: 'draconids',
+    name: 'Draconids',
+    parent: 'giacobini-zinner',
+    peak: [10, 8],
+    zhr: 10,
+    speedKmS: 21,
+    radiant: 'Draco',
+    article: 'Draconids',
+    note: 'Usually quiet, but some years it bursts into hundreds or thousands an hour.'
+  },
+  { id: 'orionids', name: 'Orionids', parent: 'halley', peak: [10, 21], zhr: 20, speedKmS: 66, radiant: 'Orion', article: 'Orionids', note: "Halley's Comet's other shower, from the other side of its orbit." },
+  { id: 'taurids', name: 'Taurids', parent: 'encke', peak: [11, 5], zhr: 5, speedKmS: 27, radiant: 'Taurus', article: 'Taurids', note: 'Few and slow, but known for big, bright fireballs.' },
+  {
+    id: 'leonids',
+    name: 'Leonids',
+    parent: 'tempel-tuttle',
+    peak: [11, 17],
+    zhr: 15,
+    speedKmS: 71,
+    radiant: 'Leo',
+    article: 'Leonids',
+    note: 'The fastest meteors. About every 33 years it becomes a storm of thousands an hour.'
+  },
+  { id: 'geminids', name: 'Geminids', parent: 'phaethon', peak: [12, 14], zhr: 150, speedKmS: 35, radiant: 'Gemini', article: 'Geminids', note: 'The strongest shower of the year, from an asteroid instead of a comet.' },
+  { id: 'ursids', name: 'Ursids', parent: 'tuttle', peak: [12, 22], zhr: 10, speedKmS: 33, radiant: 'Ursa Minor', article: 'Ursids', note: 'A small shower around the winter solstice.' }
 ];
+export const SHOWER_BY_ID = Object.fromEntries(SHOWERS.map(shower => [shower.id, shower]));
 
 // only the part of each stream inside this many AU from the Sun, where the Earth can meet it
 const STREAM_AU = 3;
@@ -77,6 +120,15 @@ export function showerSpot(shower, year = new Date().getUTCFullYear()) {
     if (!best || miss < best.missAu) best = { x: p[0], y: p[1], z: p[2], missAu: miss };
   }
   return best;
+}
+
+// the next peak on or after this date
+export function nextPeak(shower, date = new Date()) {
+  const [month, day] = shower.peak;
+  const year = date.getUTCFullYear();
+  const peak = new Date(Date.UTC(year, month - 1, day));
+  // still counts as "now" until the end of the peak day
+  return peak.getTime() + 86400000 > date.getTime() ? peak : new Date(Date.UTC(year + 1, month - 1, day));
 }
 
 export function peakLabel(shower) {
