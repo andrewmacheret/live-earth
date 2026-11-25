@@ -50,6 +50,7 @@ export default function App() {
   // moons, asteroids, comets and spacecraft load the first time you zoom out or search
   const [moons, setMoons] = useState(null);
   const [eventsOpen, setEventsOpen] = useState(false);
+  const [sourcesOpen, setSourcesOpen] = useState(false);
   const [rocks, setRocks] = useState(null);
   const [crafts, setCrafts] = useState(null);
   const loadSpaceRef = useRef(null);
@@ -842,47 +843,24 @@ export default function App() {
       )}
 
       <footer className="credits">
-        <a href="https://andrewmacheret.com/">More projects</a> · Orbits from <a href="https://celestrak.org/">CelesTrak</a>
-        {catalog && `, updated ${ageLabel(catalog.generated)}`}
-        {planes && (
-          <>
-            {' '}
-            · Planes from <a href="https://opensky-network.org/">OpenSky Network</a>, updated {ageLabel(planes.generated)}
-          </>
-        )}{' '}
-        {aurora && (
-          <>
-            {' '}
-            · Aurora from <a href="https://www.swpc.noaa.gov/products/aurora-30-minute-forecast">NOAA</a>
-          </>
-        )}
-        {cloudDay && (
-          <>
-            {' '}
-            · Clouds from <a href="https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api">NASA GIBS</a>
-          </>
-        )}{' '}
-        · Positions from <a href="https://github.com/cosinekitty/astronomy">Astronomy Engine</a> · Stars from the{' '}
-        <a href="https://github.com/ofrohn/d3-celestial">Yale Bright Star Catalog via d3-celestial</a>
-        {rocks?.generated && (
-          <>
-            {' '}
-            · Asteroids and comets from <a href="https://ssd.jpl.nasa.gov/tools/sbdb_query.html">NASA JPL</a>, updated{' '}
-            {ageLabel(rocks.generated)}
-          </>
-        )}
-        {(crafts?.generated || moons?.generated) && (
-          <>
-            {' '}
-            · Moons and spacecraft from <a href="https://ssd.jpl.nasa.gov/horizons/">JPL Horizons</a>
-          </>
-        )}{' '}
-        · Earth textures from{' '}
-        <a href="https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets">three.js</a>, others from{' '}
-        <a href="https://www.solarsystemscope.com/textures/">Solar System Scope</a> (
-        <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>) ·{' '}
-        <a href="https://github.com/andrewmacheret/live-earth">Source</a>
+        <a href="https://andrewmacheret.com/">More projects</a> ·{' '}
+        <button type="button" onClick={() => setSourcesOpen(true)}>
+          Data sources
+        </button>{' '}
+        · <a href="https://github.com/andrewmacheret/live-earth">Source</a>
       </footer>
+
+      <DataSources
+        open={sourcesOpen}
+        onClose={() => setSourcesOpen(false)}
+        catalog={catalog}
+        planes={planes}
+        aurora={aurora}
+        cloudDay={cloudDay}
+        rocks={rocks}
+        crafts={crafts}
+        moons={moons}
+      />
     </>
   );
 }
@@ -1638,6 +1616,119 @@ function offsetLabel(ms) {
   const days = hours / 24;
   if (days < 365) return `${sign}${days.toFixed(days < 100 ? 1 : 0)} d`;
   return `${sign}${(days / 365.25).toFixed(1)} yr`;
+}
+
+// every data source and picture the page uses, with how fresh the data is once it's loaded
+function DataSources({ open, onClose, catalog, planes, aurora, cloudDay, rocks, crafts, moons }) {
+  const ref = useRef(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (open && !dialog.open) dialog.showModal();
+    if (!open && dialog.open) dialog.close();
+  }, [open]);
+  const jplDate = crafts?.generated || moons?.generated;
+  const sources = [
+    {
+      what: 'Satellite orbits',
+      name: 'CelesTrak',
+      href: 'https://celestrak.org/',
+      note: catalog && `updated ${ageLabel(catalog.generated)}`
+    },
+    planes && {
+      what: 'Planes',
+      name: 'OpenSky Network',
+      href: 'https://opensky-network.org/',
+      note: `updated ${ageLabel(planes.generated)}`
+    },
+    {
+      what: 'The Sun, Moon and planets, eclipses and Coming up',
+      name: 'Astronomy Engine',
+      href: 'https://github.com/cosinekitty/astronomy'
+    },
+    {
+      what: 'Asteroids, comets and the other dwarf planets',
+      name: 'NASA JPL Small-Body Database',
+      href: 'https://ssd.jpl.nasa.gov/tools/sbdb_query.html',
+      note: rocks?.generated && `updated ${ageLabel(rocks.generated)}`
+    },
+    {
+      what: 'Moons and spacecraft',
+      name: 'NASA JPL Horizons',
+      href: 'https://ssd.jpl.nasa.gov/horizons/',
+      note: jplDate && `updated ${ageLabel(jplDate)}`
+    },
+    {
+      what: 'Aurora',
+      name: "NOAA's aurora forecast",
+      href: 'https://www.swpc.noaa.gov/products/aurora-30-minute-forecast',
+      note: aurora && `forecast at ${aurora.observed.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+    },
+    {
+      what: 'Clouds',
+      name: 'NASA GIBS',
+      href: 'https://www.earthdata.nasa.gov/engage/open-data-services-software/earthdata-developer-portal/gibs-api',
+      note:
+        cloudDay &&
+        `pictures from ${new Date(`${cloudDay}T12:00Z`).toLocaleDateString([], { month: 'short', day: 'numeric', timeZone: 'UTC' })}`
+    },
+    {
+      what: 'Stars and constellations',
+      name: 'Yale Bright Star Catalog via d3-celestial',
+      href: 'https://github.com/ofrohn/d3-celestial'
+    },
+    { what: 'Descriptions and photos', name: 'Wikipedia', href: 'https://www.wikipedia.org/' },
+    {
+      what: 'Earth maps',
+      name: 'three.js examples',
+      href: 'https://github.com/mrdoob/three.js/tree/dev/examples/textures/planets'
+    },
+    {
+      what: 'Sun, Moon and planet maps',
+      name: 'Solar System Scope',
+      href: 'https://www.solarsystemscope.com/textures/',
+      license: { name: 'CC BY 4.0', href: 'https://creativecommons.org/licenses/by/4.0/' }
+    }
+  ].filter(Boolean);
+  return (
+    // clicks on the dark backdrop land on the dialog itself, so they close it
+    <dialog
+      ref={ref}
+      className="sources"
+      aria-labelledby="sources-title"
+      onClose={onClose}
+      onClick={event => event.target === ref.current && onClose()}
+      onKeyDown={event => {
+        // so Escape only closes this and doesn't also drop what's selected
+        if (event.key !== 'Escape') return;
+        event.stopPropagation();
+        onClose();
+      }}
+    >
+      <div className="sources-body">
+        <button className="close" onClick={onClose} aria-label="Close">
+          ×
+        </button>
+        <h2 id="sources-title">Data sources</h2>
+        <dl>
+          {sources.map(source => (
+            <div key={source.name}>
+              <dt>{source.what}</dt>
+              <dd>
+                <a href={source.href}>{source.name}</a>
+                {source.license && (
+                  <>
+                    {' '}
+                    (<a href={source.license.href}>{source.license.name}</a>)
+                  </>
+                )}
+                {source.note && <span className="note"> · {source.note}</span>}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    </dialog>
+  );
 }
 
 function ageLabel(iso) {

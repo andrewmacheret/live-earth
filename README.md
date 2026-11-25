@@ -60,7 +60,7 @@ CelesTrak and JPL don't allow calls from web pages, so Lambda `LiveEarth` saves 
 
 Lambda `LiveEarth` (`lambda/handler.js`) runs once a day at 02:30 UTC from the EventBridge rule `LiveEarthRefresh`. It downloads the latest orbits for every active satellite from CelesTrak and writes them to `data/satellites.json`, cached for 5 minutes.
 
-CelesTrak only allows one download per IP every 2 hours and can be slow, which is why the page never calls it directly. Day-old orbits put satellites a few kilometres off, which you can't see on the globe. The footer shows how old the data is.
+CelesTrak only allows one download per IP every 2 hours and can be slow, which is why the page never calls it directly. Day-old orbits put satellites a few kilometres off, which you can't see on the globe. Data sources, in the footer, shows how old the data is.
 
 A web worker (`src/sats/propagate.worker.js`) runs the SGP4 orbit model for every satellite about 20 times a second. Each frame moves the dots along their velocity in between.
 
