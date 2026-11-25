@@ -157,13 +157,11 @@ npm run build
 
 ## Health check
 
-[`/projects/live-earth/healthcheck/`](https://andrewmacheret.com/projects/live-earth/healthcheck/) checks:
+Once a day, the Canary workflow (`.github/workflows/canary.yml`), started by [andrewmacheret/canary](https://github.com/andrewmacheret/canary), checks:
 
 - the page and its scripts and styles
 - that the Lambda rewrote the satellite, asteroid, spacecraft and moon data in the last 30 hours
 - that NASA GIBS (clouds) and Wikipedia's summary API answer
-
-The Canary workflow (`.github/workflows/canary.yml`) opens it once a day, started by [andrewmacheret/canary](https://github.com/andrewmacheret/canary).
 
 ## Deploy
 
