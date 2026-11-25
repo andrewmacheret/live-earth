@@ -458,6 +458,7 @@ async function refine(craft, rows, fetchImpl) {
 // One that fails is left out, so a single missing spacecraft doesn't cost the rest.
 export async function downloadSpacecraft({ fetchImpl = fetch, now = Date.now(), log = () => {} } = {}) {
   const out = [];
+  const skipped = [];
   for (const craft of SPACECRAFT) {
     try {
       const rows = await downloadOne(craft, now, fetchImpl);
@@ -474,10 +475,12 @@ export async function downloadSpacecraft({ fetchImpl = fetch, now = Date.now(), 
       }
       out.push(entry);
     } catch (err) {
+      skipped.push(craft.id);
       log(`Skipped ${craft.name}: ${err.message}`);
     }
   }
-  return { generated: new Date(now).toISOString(), source: 'NASA JPL Horizons', count: out.length, spacecraft: out };
+  // the health check page reads skipped
+  return { generated: new Date(now).toISOString(), source: 'NASA JPL Horizons', count: out.length, skipped, spacecraft: out };
 }
 
 // Ready-to-use spacecraft from the downloaded file, each with its details from SPACECRAFT

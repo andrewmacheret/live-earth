@@ -65,11 +65,14 @@ export function createHandler({
     // a short list means CelesTrak sent something odd, so keep the last good file
     if (data.count < 1000) throw new Error(`Only got ${data.count} satellites`);
     // Wikipedia links are nice to have, so keep the old ones if Wikidata is down
+    // and wikiFetched says how old they are, for the health check page
     try {
       data.wiki = pickTitles(await downloadWiki(), data.columns.NORAD_CAT_ID);
+      data.wikiFetched = data.generated;
     } catch (err) {
       log(`Kept old Wikipedia links: ${err.message}`);
       data.wiki = previous?.wiki ?? {};
+      data.wikiFetched = previous?.wikiFetched ?? null;
     }
     await save(JSON.stringify(data));
     log(`Saved ${data.count} satellites, ${fresh} groups fresh, ${Object.keys(data.wiki).length} Wikipedia links`);

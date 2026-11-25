@@ -221,6 +221,7 @@ async function getText(url, fetchImpl) {
 export async function downloadMoons({ fetchImpl = fetch, now = Date.now(), log = () => {} } = {}) {
   const epoch = Math.round(now / DAY_MS) + 2440587.5;
   const out = [];
+  const skipped = [];
   for (const moon of MOONS) {
     try {
       const rows = parseElements(
@@ -229,10 +230,12 @@ export async function downloadMoons({ fetchImpl = fetch, now = Date.now(), log =
       if (rows.length < 30) throw new Error(`only ${rows.length} rows`);
       out.push({ id: moon.id, ...fitOrbit(rows, epoch) });
     } catch (err) {
+      skipped.push(moon.id);
       log(`Skipped ${moon.name}: ${err.message}`);
     }
   }
-  return { generated: new Date(now).toISOString(), source: 'NASA JPL Horizons', epoch, count: out.length, moons: out };
+  // the health check page reads skipped
+  return { generated: new Date(now).toISOString(), source: 'NASA JPL Horizons', epoch, count: out.length, skipped, moons: out };
 }
 
 // Ready-to-use moons from the downloaded file, each with its details from MOONS
