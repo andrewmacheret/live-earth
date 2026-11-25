@@ -13,6 +13,7 @@ import {
   sizeFromH
 } from '../space/smallBodies.js';
 import { CHARON_PULL, moonOffset, moonPath, moonPeriod } from '../space/moons.js';
+import { PARENT_BY_ID, PARENTS, peakLabel, SHOWERS, showerSpot, streamPoints } from '../space/meteors.js';
 import { CRAFT_COLOR, craftPath, craftPosition, craftSpeed } from '../space/spacecraft.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
 import { createRocks } from './rocks.js';
@@ -104,6 +105,97 @@ const ringFragment = /* glsl */ `
     #include <colorspace_fragment>
   }
 `;
+
+// The heliosphere's edges glow where you look along them, like a soap bubble
+const bubbleVertex = /* glsl */ `
+  varying vec3 vNormalView;
+  varying vec3 vView;
+  void main() {
+    vec4 view = modelViewMatrix * vec4(position, 1.0);
+    vView = view.xyz;
+    vNormalView = normalize(normalMatrix * normal);
+    gl_Position = projectionMatrix * view;
+  }
+`;
+const bubbleFragment = /* glsl */ `
+  uniform vec3 uColor;
+  uniform float uOpacity;
+  varying vec3 vNormalView;
+  varying vec3 vView;
+  void main() {
+    float edge = 1.0 - abs(dot(normalize(vNormalView), normalize(-vView)));
+    gl_FragColor = vec4(uColor * (0.01 + pow(edge, 5.0) * 0.3) * uOpacity, 1.0);
+  }
+`;
+
+// The Sun's wind blows a bubble in the gas between the stars. The termination shock is where the wind
+// slows down, and the heliopause is where the bubble ends. Both are squashed on the side the
+// interstellar wind comes from (the nose) and stretched into a tail behind. Sizes are in AU, roughly
+// where the Voyagers crossed them.
+const NOSE_LONGITUDE = 255.4;
+const NOSE_LATITUDE = 5.2;
+const HELIOSPHERE = [
+  { name: 'Termination shock', noseAu: 85, stretch: 0.3, color: '#6fa8ff' },
+  { name: 'Heliopause', noseAu: 115, stretch: 0.5, color: '#9b8cff' }
+];
+
+// the direction the nose points, in J2000 equator coordinates
+function noseDirection() {
+  const lon = THREE.MathUtils.degToRad(NOSE_LONGITUDE);
+  const lat = THREE.MathUtils.degToRad(NOSE_LATITUDE);
+  const tilt = THREE.MathUtils.degToRad(23.4392911);
+  const [x, y, z] = [Math.cos(lat) * Math.cos(lon), Math.cos(lat) * Math.sin(lon), Math.sin(lat)];
+  return new THREE.Vector3(x, y * Math.cos(tilt) - z * Math.sin(tilt), y * Math.sin(tilt) + z * Math.cos(tilt));
+}
+
+// a sphere pushed out more the farther each point is from the nose
+function bubble({ noseAu, stretch, color }, nose) {
+  const geometry = new THREE.SphereGeometry(1, 96, 48);
+  const position = geometry.attributes.position;
+  const d = new THREE.Vector3();
+  for (let k = 0; k < position.count; k++) {
+    d.fromBufferAttribute(position, k);
+    d.multiplyScalar(noseAu * (1 + stretch * (1 - d.dot(nose))));
+    position.setXYZ(k, d.x, d.y, d.z);
+  }
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.ShaderMaterial({
+      vertexShader: bubbleVertex,
+      fragmentShader: bubbleFragment,
+      uniforms: { uColor: { value: new THREE.Color(color) }, uOpacity: { value: 0 } },
+      side: THREE.DoubleSide,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    })
+  );
+  mesh.frustumCulled = false;
+  return mesh;
+}
+
+// meteor stream dust: tiny round dots in each parent's color
+const streamVertex = /* glsl */ `
+  attribute vec3 color;
+  uniform float uSize;
+  varying vec3 vColor;
+  void main() {
+    vColor = color;
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    gl_PointSize = uSize;
+  }
+`;
+const streamFragment = /* glsl */ `
+  uniform float uOpacity;
+  varying vec3 vColor;
+  void main() {
+    float d = length(gl_PointCoord - 0.5) * 2.0;
+    if (d > 1.0) discard;
+    gl_FragColor = vec4(vColor * (1.0 - d) * uOpacity, 1.0);
+  }
+`;
+const STREAM_POINTS = 900;
 
 const dotGeometry = new THREE.BufferGeometry().setAttribute(
   'position',
@@ -404,14 +496,61 @@ export function createSolarSystem(container, { onPick }) {
     if (item.ring && !item.body.rings.bands) loadInto(`${item.body.id}_ring.png`, item.ring);
   };
 
-  // Lagrange points are just marks with names, and can't be picked
-  const lagrange = lagrangePoints(new Date()).map(p => {
+  // Lagrange points, the heliosphere and meteor showers are just marks with names, and can't be picked
+  const mark = (className, text, color) => {
     const label = document.createElement('div');
-    label.className = 'lagrange-mark';
-    label.textContent = p.name;
+    label.className = className;
+    label.textContent = text;
+    if (color) label.style.color = color;
     label.hidden = true;
     labelLayer.appendChild(label);
-    return { id: p.id, between: p.between, label, position: new THREE.Vector3(), screen: null, distance: 0, screenPx: 0 };
+    return { label, position: new THREE.Vector3(), screen: null, distance: 0, screenPx: 0 };
+  };
+  const lagrange = lagrangePoints(new Date()).map(p => ({ ...mark('lagrange-mark', p.name), between: p.between }));
+
+  const nose = noseDirection();
+  const heliosphere = HELIOSPHERE.map(shell => {
+    const mesh = bubble(shell, nose);
+    orbits.add(mesh);
+    // the name sits on the nose, where the Voyagers went through
+    const item = mark('region-mark', shell.name, shell.color);
+    return { ...item, mesh, local: nose.clone().multiplyScalar(shell.noseAu) };
+  });
+  let heliosphereOpacity = 0;
+
+  // every stream's dust in one set of points, drawn around the Sun in AU
+  const streams = (() => {
+    const positions = new Float32Array(PARENTS.length * STREAM_POINTS * 3);
+    const colors = new Float32Array(PARENTS.length * STREAM_POINTS * 3);
+    PARENTS.forEach((parent, j) => {
+      positions.set(streamPoints(parent, STREAM_POINTS, j + 1), j * STREAM_POINTS * 3);
+      const c = new THREE.Color(parent.color);
+      for (let k = 0; k < STREAM_POINTS; k++) colors.set([c.r, c.g, c.b], (j * STREAM_POINTS + k) * 3);
+    });
+    const geometry = new THREE.BufferGeometry()
+      .setAttribute('position', new THREE.BufferAttribute(positions, 3))
+      .setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    const points = new THREE.Points(
+      geometry,
+      new THREE.ShaderMaterial({
+        vertexShader: streamVertex,
+        fragmentShader: streamFragment,
+        uniforms: { uSize: { value: 2 }, uOpacity: { value: 0 } },
+        transparent: true,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      })
+    );
+    points.frustumCulled = false;
+    orbits.add(points);
+    return points;
+  })();
+  let streamOpacity = 0;
+  // each shower's name goes where the Earth meets its stream at the peak
+  const showers = SHOWERS.map(shower => {
+    const spot = showerSpot(shower);
+    const item = mark('shower-mark', `${shower.name} · ${peakLabel(shower)}`, PARENT_BY_ID[shower.parent].color);
+    return { ...item, local: new THREE.Vector3(spot.x, spot.y, spot.z) };
   });
 
   let positions = null;
@@ -724,6 +863,7 @@ export function createSolarSystem(container, { onPick }) {
       craftFrame.matrixWorldNeedsUpdate = true;
       if (now !== orbitsTime) drawOrbits(now);
       lagrangePoints(date).forEach((p, i) => lagrange[i].position.set(...frame(p.x, p.y, p.z, v)));
+      for (const item of [...heliosphere, ...showers]) item.position.copy(item.local).applyMatrix4(orbits.matrix);
       jd = julianDay(now);
       for (const system of moonSystems) {
         // the planet's equator: x where it crosses Earth's equator, z its north pole
@@ -806,6 +946,17 @@ export function createSolarSystem(container, { onPick }) {
       moonOrbit.material.opacity = 0.2 + 0.15 * THREE.MathUtils.smoothstep(earthDistance, 8, 30);
       const orbitOpacity = 0.2 + 0.2 * THREE.MathUtils.smoothstep(earthDistance, 300, 3000);
       for (const { line } of orbitLines) line.material.opacity = orbitOpacity;
+      // the heliosphere shows once you're out past the planets, and meteor streams among the inner planets
+      heliosphereOpacity = THREE.MathUtils.smoothstep(earthDistance, 20 * AU, 120 * AU);
+      for (const { mesh } of heliosphere) {
+        mesh.visible = heliosphereOpacity > 0;
+        mesh.material.uniforms.uOpacity.value = heliosphereOpacity;
+      }
+      streamOpacity =
+        THREE.MathUtils.smoothstep(earthDistance, 0.15 * AU, 0.6 * AU) * (1 - THREE.MathUtils.smoothstep(earthDistance, 15 * AU, 40 * AU));
+      streams.visible = streamOpacity > 0;
+      streams.material.uniforms.uOpacity.value = 0.55 * streamOpacity;
+      streams.material.uniforms.uSize.value = 2 * pixelRatio;
       // a moon's orbit shows once it's big enough on screen to tell apart from the planet
       for (const system of moonSystems) {
         const planetDistance = camera.position.distanceTo(byId[system.planet].holder.position);
@@ -914,26 +1065,33 @@ export function createSolarSystem(container, { onPick }) {
         if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
       }
 
-      // Lagrange points last. Each shows once it's far enough on screen from both of its bodies.
-      for (const item of lagrange) {
-        const { label, position } = item;
-        let show = !!projectOne(item, position, camera, width, height);
-        if (show) {
-          const apart = Math.min(...item.between.map(id => byId[id].screen ? Math.hypot(byId[id].screen.x - item.screen.x, byId[id].screen.y - item.screen.y) : Infinity));
-          show = apart > 24 && !behindEarth(camera.position, position) && !hidden(item);
+      // Then the marks that can't be picked. Lagrange points show once they're far enough on screen
+      // from both of their bodies.
+      const lagrangeApart = item =>
+        Math.min(
+          ...item.between.map(id => (byId[id].screen ? Math.hypot(byId[id].screen.x - item.screen.x, byId[id].screen.y - item.screen.y) : Infinity))
+        ) > 24;
+      const placeMarks = (list, visible, check = () => true) => {
+        for (const item of list) {
+          const { label, position } = item;
+          let show = visible && !!projectOne(item, position, camera, width, height);
+          if (show) show = check(item) && !behindEarth(camera.position, position) && !hidden(item);
+          let x = 0;
+          let y = 0;
+          if (show) {
+            x = item.screen.x - 4;
+            y = item.screen.y - 8;
+            const box = { left: x + 8, right: x + 12 + label.textContent.length * 5.5, top: y, bottom: y + 16 };
+            show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+            if (show) placed.push(box);
+          }
+          if (label.hidden === show) label.hidden = !show;
+          if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
         }
-        let x = 0;
-        let y = 0;
-        if (show) {
-          x = item.screen.x - 4;
-          y = item.screen.y - 8;
-          const box = { left: x + 8, right: x + 12 + label.textContent.length * 5.5, top: y, bottom: y + 16 };
-          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
-          if (show) placed.push(box);
-        }
-        if (label.hidden === show) label.hidden = !show;
-        if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
-      }
+      };
+      placeMarks(showers, streamOpacity > 0.5);
+      placeMarks(lagrange, true, lagrangeApart);
+      placeMarks(heliosphere, heliosphereOpacity > 0.5);
     },
 
     // Bodies under the pointer can be picked like satellites. Returns screen spots for each body.

@@ -113,7 +113,8 @@ export class Globe {
     this.controls.enableDamping = true;
     this.controls.enablePan = false;
     this.controls.minDistance = 1.08;
-    this.controls.maxDistance = 5e6;
+    // far enough to see the whole heliosphere, the bubble the Sun's wind blows
+    this.controls.maxDistance = 1.5e7;
 
     this.globe = createEarth();
     this.stars = createStars();

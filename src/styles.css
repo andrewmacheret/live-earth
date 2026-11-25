@@ -215,6 +215,28 @@ h1 {
   display: none;
 }
 
+.region-mark,
+.shower-mark {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 16px;
+  line-height: 16px;
+  padding-left: 8px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  opacity: 0.75;
+  text-shadow: 0 0 4px #000, 0 0 2px #000;
+}
+
+.region-mark {
+  font-size: 11px;
+  font-style: italic;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 /* a small diamond right on the point */
 .lagrange-mark::before {
   content: '';
