@@ -401,6 +401,15 @@ export class Globe {
     this.solar.setShowersHidden(hide);
   }
 
+  // Point the camera at an eclipse from eclipses.js. The page sets the clock.
+  watchEclipse(eclipse) {
+    const moon = () => this.solar.positionOf('moon', new THREE.Vector3()).normalize();
+    // the Moon's shadow lands on the side of the Earth facing the Moon
+    if (eclipse.type === 'solar') this.goTo('earth', { distance: HOME_DISTANCE, direction: moon });
+    // and the Earth's shadow on the side of the Moon facing the Earth
+    else this.goTo('moon', { direction: () => moon().negate() });
+  }
+
   setAuroraHidden(hide) {
     this.auroraHidden = hide;
   }
@@ -737,6 +746,7 @@ export class Globe {
     const cloudsOff = this.clouds.day ? Math.abs(now - Date.parse(`${this.clouds.day}T12:00Z`)) / 86400000 : Infinity;
     this.clouds.setOpacity(this.cloudsHidden ? 0 : 1 - THREE.MathUtils.smoothstep(cloudsOff, 3, 5));
     this.solar.place(now);
+    this.globe.setMoon(this.solar.positionOf('moon', this.moonAt ?? (this.moonAt = new THREE.Vector3())));
     // satellites and planes fade out as you zoom out toward the planets
     this.fade = 1 - THREE.MathUtils.smoothstep(this.camera.position.length(), 15, 120);
     // tell the page when the camera moves between the Earth's neighborhood and space

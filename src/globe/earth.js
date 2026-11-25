@@ -18,6 +18,10 @@ const earthFragment = /* glsl */ `
   uniform sampler2D dayMap;
   uniform sampler2D nightMap;
   uniform vec3 sunDirection;
+  uniform vec3 uMoon;
+  // the Sun's and Moon's sizes, as the angle from their middle to their edge (radians)
+  const float SUN_SIZE = 0.004654;
+  const float MOON_RADIUS = 0.2727;
   varying vec2 vUv;
   varying vec3 vNormal;
   varying vec3 vWorld;
@@ -26,15 +30,26 @@ const earthFragment = /* glsl */ `
     vec3 view = normalize(cameraPosition - vWorld);
     float sun = dot(n, sunDirection);
 
-    // pow < 1 keeps late afternoon from looking like night
+    // During a solar eclipse, how much of the Sun the Moon covers from here. cross() is used for the
+    // angle between them because acos() isn't precise enough for such tiny angles.
+    vec3 toMoon = uMoon - vWorld;
+    float moonDistance = length(toMoon);
+    vec3 moonDir = toMoon / moonDistance;
+    float moonSize = MOON_RADIUS / moonDistance;
+    float apart = dot(moonDir, sunDirection) > 0.0 ? length(cross(moonDir, sunDirection)) : 1.0;
+    float covered = min(1.0, (moonSize * moonSize) / (SUN_SIZE * SUN_SIZE)) *
+      (1.0 - smoothstep(abs(SUN_SIZE - moonSize), SUN_SIZE + moonSize, apart));
+
+    // pow < 1 keeps late afternoon from looking like night. The shadow is made a bit darker than
+    // real, or it's hard to see from space.
     vec3 day = texture2D(dayMap, vUv).rgb;
-    vec3 color = day * (0.015 + 1.1 * pow(clamp(sun, 0.0, 1.0), 0.55));
+    vec3 color = day * (0.015 + 1.1 * pow(clamp(sun, 0.0, 1.0), 0.55) * pow(1.0 - covered, 1.8));
 
     // warmer light where the sun is low
     color *= mix(vec3(1.0, 0.72, 0.5), vec3(1.0), smoothstep(0.0, 0.3, sun));
 
     // city lights come on a little after sunset
-    float lightsOn = 1.0 - smoothstep(-0.16, 0.0, sun);
+    float lightsOn = max(1.0 - smoothstep(-0.16, 0.0, sun), smoothstep(0.85, 1.0, covered));
     color += texture2D(nightMap, vUv).rgb * vec3(1.0, 0.8, 0.55) * 2.0 * lightsOn;
 
     // thin blue haze at the edge, brighter on the day side
@@ -81,6 +96,8 @@ export function createEarth() {
 
   const sunDirection = { value: new THREE.Vector3(1, 0, 0) };
   const dayMap = { value: load(dayUrl, true) };
+  // where the Moon is, so its shadow can fall on the Earth
+  const moon = { value: new THREE.Vector3(60, 0, 0) };
 
   const earth = new THREE.Mesh(
     new THREE.SphereGeometry(1, 160, 80),
@@ -90,7 +107,8 @@ export function createEarth() {
       uniforms: {
         dayMap,
         nightMap: { value: load(nightUrl, true) },
-        sunDirection
+        sunDirection,
+        uMoon: moon
       }
     })
   );
@@ -115,6 +133,9 @@ export function createEarth() {
     dayMap,
     setSun(direction) {
       sunDirection.value.set(...direction);
+    },
+    setMoon(position) {
+      moon.value.copy(position);
     }
   };
 }

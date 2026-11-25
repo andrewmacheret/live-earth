@@ -9,6 +9,7 @@ import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodi
 import { fromCompactMoons } from './space/moons.js';
 import { CRAFT_COLOR, fromCompactSpacecraft } from './space/spacecraft.js';
 import { PARENT_BY_ID, peakLabel, SHOWERS } from './space/meteors.js';
+import { nextLunarEclipse, nextSolarEclipse, placeLabel } from './space/eclipses.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
@@ -319,6 +320,14 @@ export default function App() {
     const globe = globeRef.current;
     globe.setClock({ simStart: globe.simNow(), speed: value });
     setSpeed(value);
+  };
+
+  // jump to just before an eclipse's peak and play it at a minute a second
+  const watchEclipse = eclipse => {
+    const globe = globeRef.current;
+    globe.setClock({ simStart: eclipse.peak.getTime() - 20 * 60000, speed: 60 });
+    setSpeed(60);
+    globe.watchEclipse(eclipse);
   };
 
   const goLive = () => {
@@ -710,7 +719,9 @@ export default function App() {
         <BodyPanel
           info={info}
           summary={summary}
+          now={simTime}
           onGo={() => globeRef.current.goTo(info.anchored ? 'earth' : bodyId)}
+          onWatch={watchEclipse}
           onClose={closePanel}
         />
       )}
@@ -1042,9 +1053,19 @@ function InfoPanel(props) {
   );
 }
 
-function BodyPanel({ info, summary, onGo, onClose }) {
+function BodyPanel({ info, summary, now, onGo, onWatch, onClose }) {
   const body = BODY_BY_ID[info.id];
   const home = info.id === 'earth';
+  // searching takes a moment, so only search again when the day changes. Starting a few hours back
+  // keeps an eclipse that's happening now as the next one.
+  const day = Math.floor(now / 86400000);
+  const eclipses = useMemo(() => {
+    const from = new Date(day * 86400000 - 4 * 3600000);
+    return {
+      solar: info.id === 'sun' || info.id === 'earth' ? nextSolarEclipse(from) : null,
+      lunar: info.id === 'moon' || info.id === 'earth' ? nextLunarEclipse(from, { skipFaint: true }) : null
+    };
+  }, [day, info.id]);
   return (
     <aside className="panel top-right info">
       <button className="close" onClick={onClose} aria-label="Close">
@@ -1090,6 +1111,8 @@ function BodyPanel({ info, summary, onGo, onClose }) {
             </dd>
           </>
         )}
+        {eclipses.solar && <EclipseRow eclipse={eclipses.solar} now={now} onWatch={onWatch} />}
+        {eclipses.lunar && <EclipseRow eclipse={eclipses.lunar} now={now} onWatch={onWatch} />}
       </dl>
       {!(home && info.anchored) && (
         <div className="actions">
@@ -1100,6 +1123,27 @@ function BodyPanel({ info, summary, onGo, onClose }) {
       )}
       <About summary={summary} links={[{ label: 'NASA', href: nasaLink(body) }]} />
     </aside>
+  );
+}
+
+function EclipseRow({ eclipse, now, onWatch }) {
+  const hours = (eclipse.peak.getTime() - now) / 3600000;
+  const until = hours > 36 ? `in ${number.format(Math.round(hours / 24))} days` : hours > 1 ? `in ${Math.round(hours)} hours` : 'now';
+  const when = eclipse.peak.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' });
+  const where = eclipse.type === 'solar' ? placeLabel(eclipse.latitude, eclipse.longitude) : null;
+  return (
+    <>
+      <dt>Next {eclipse.type} eclipse</dt>
+      <dd>
+        {when}, {eclipse.kind}
+        {eclipse.type === 'lunar' && eclipse.totalMinutes > 0 && `, ${eclipse.totalMinutes} min in the dark`}
+        {where && <span className="muted"> (middle of the shadow at {where})</span>}
+        <span className="muted"> {until}</span>{' '}
+        <button className="link-button" onClick={() => onWatch(eclipse)}>
+          Watch it
+        </button>
+      </dd>
+    </>
   );
 }
 

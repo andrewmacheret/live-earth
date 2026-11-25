@@ -48,6 +48,8 @@ const surfaceFragment = /* glsl */ `
   uniform vec3 uColor;
   uniform vec3 uSunView;
   uniform float uEmissive;
+  uniform float uShadow;
+  uniform vec3 uEarthView;
   varying vec2 vUv;
   varying vec3 vNormalView;
   varying vec3 vViewPosition;
@@ -61,7 +63,20 @@ const surfaceFragment = /* glsl */ `
       color = base * 1.35 * (0.45 + 0.55 * pow(facing, 0.5));
     } else {
       float sun = dot(n, uSunView);
-      color = base * (0.012 + 1.05 * pow(clamp(sun, 0.0, 1.0), 0.7));
+      float light = pow(clamp(sun, 0.0, 1.0), 0.7);
+      color = base * (0.012 + 1.05 * light);
+      if (uShadow > 0.5) {
+        // The Earth's shadow on the Moon during a lunar eclipse. The dark middle (umbra) shrinks and the
+        // soft edge (penumbra) grows by the Sun's size with distance behind the Earth. The Earth's air
+        // makes it a bit wider, and bends red sunset light into the middle.
+        vec3 toEarth = uEarthView - vViewPosition;
+        float behind = dot(toEarth, uSunView);
+        float off = length(toEarth - behind * uSunView);
+        float umbra = 1.02 - behind * 0.004654;
+        float penumbra = 1.02 + behind * 0.004654;
+        float shade = behind > 0.0 ? smoothstep(umbra - 0.04, penumbra, off) : 1.0;
+        color = base * (0.012 + 1.05 * light * shade) + base * vec3(0.2, 0.05, 0.015) * light * (1.0 - smoothstep(umbra - 0.04, umbra + 0.04, off)) * step(0.0, behind);
+      }
     }
     gl_FragColor = vec4(color, 1.0);
     #include <colorspace_fragment>
@@ -217,7 +232,10 @@ function surface(body, radius) {
       uHasMap: { value: 0 },
       uColor: { value: new THREE.Color(body.color) },
       uSunView: { value: new THREE.Vector3(0, 0, 1) },
-      uEmissive: { value: body.id === 'sun' ? 1 : 0 }
+      uEmissive: { value: body.id === 'sun' ? 1 : 0 },
+      // only the Moon gets the Earth's shadow
+      uShadow: { value: body.id === 'moon' ? 1 : 0 },
+      uEarthView: { value: new THREE.Vector3() }
     }
   });
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(radius, 64, 32), material);
@@ -996,6 +1014,8 @@ export function createSolarSystem(container, { onPick }) {
             sunView.subVectors(sun, holder.position).transformDirection(camera.matrixWorldInverse);
             mesh.material.uniforms.uSunView.value.copy(sunView);
             item.ring?.material.uniforms.uSunView.value.copy(sunView);
+            // the Earth is at the middle of the scene
+            if (body.id === 'moon') mesh.material.uniforms.uEarthView.value.setScalar(0).applyMatrix4(camera.matrixWorldInverse);
           }
         }
       }
