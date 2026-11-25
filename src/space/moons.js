@@ -1,4 +1,4 @@
-// The moons of Mars, Jupiter, Saturn, Uranus, Neptune and Pluto, down to a few km across.
+// The moons of Mars, Jupiter, Saturn, Uranus, Neptune, Pluto and three other dwarf planets, down to a few km across.
 // It skips the hundreds of tiny far-out moons that were only found in the last few years.
 // The Lambda asks JPL's Horizons system how each moon's orbit changes over a year either side of today,
 // then fits a simple orbit that turns at a steady rate. That's a few numbers per moon, and it stays
@@ -16,6 +16,7 @@ const TDB_AHEAD_DAYS = 69.184 / 86400;
 // planet is a body id from bodies.js. radiusKm is the mean radius.
 // barycenter: circles the balance point between Pluto and Charon instead of Pluto itself. Pluto wobbles
 // around that point every 6 days, so measured from Pluto these orbits would be a mess.
+// j2000: Horizons doesn't know the dwarf planet's equator, so the orbit is measured against Earth's (J2000).
 export const MOONS = [
   { id: 'phobos', horizons: 401, planet: 'mars', name: 'Phobos', radiusKm: 11.1, color: '#a39486', article: 'Phobos (moon)' },
   { id: 'deimos', horizons: 402, planet: 'mars', name: 'Deimos', radiusKm: 6.2, color: '#b9a68f', article: 'Deimos (moon)' },
@@ -99,12 +100,16 @@ export const MOONS = [
   { id: 'styx', horizons: 905, planet: 'pluto', name: 'Styx', radiusKm: 5, color: '#c8c0b8', article: 'Styx (moon)', barycenter: true },
   { id: 'nix', horizons: 902, planet: 'pluto', name: 'Nix', radiusKm: 19, color: '#d8d0c8', article: 'Nix (moon)', barycenter: true },
   { id: 'kerberos', horizons: 904, planet: 'pluto', name: 'Kerberos', radiusKm: 6, color: '#c8c0b8', article: 'Kerberos (moon)', barycenter: true },
-  { id: 'hydra', horizons: 903, planet: 'pluto', name: 'Hydra', radiusKm: 19, color: '#d8d0c8', article: 'Hydra (moon)', barycenter: true }
+  { id: 'hydra', horizons: 903, planet: 'pluto', name: 'Hydra', radiusKm: 19, color: '#d8d0c8', article: 'Hydra (moon)', barycenter: true },
+  // Horizons has no orbits for the moons of Haumea and Makemake
+  { id: 'dysnomia', horizons: 120136199, planet: 'eris', name: 'Dysnomia', radiusKm: 350, color: '#8c8780', article: 'Dysnomia (moon)', j2000: true },
+  { id: 'weywot', horizons: 120050000, planet: 'quaoar', name: 'Weywot', radiusKm: 85, color: '#a08c80', article: 'Weywot', j2000: true },
+  { id: 'vanth', horizons: 120090482, planet: 'orcus', name: 'Vanth', radiusKm: 221, color: '#8a8884', article: 'Vanth (moon)', j2000: true }
 ];
 export const MOON_BY_ID = Object.fromEntries(MOONS.map(moon => [moon.id, moon]));
 
 // Horizons' code for each planet's center
-const CENTERS = { mars: 499, jupiter: 599, saturn: 699, uranus: 799, neptune: 899, pluto: 999 };
+const CENTERS = { mars: 499, jupiter: 599, saturn: 699, uranus: 799, neptune: 899, pluto: 999, eris: 920136199, quaoar: 920050000, orcus: 920090482 };
 // where the balance point sits between Pluto and Charon, as a share of the way from Pluto to Charon
 export const CHARON_PULL = 0.1086;
 const time = ms => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
@@ -120,7 +125,7 @@ function elementsUrl(moon, start, stop) {
     STEP_SIZE: "'1 d'",
     // angles measured from the planet's equator. Horizons has no equator for the balance point,
     // so those use the same J2000 equator as everything else.
-    REF_PLANE: moon.barycenter ? 'FRAME' : 'BODY EQUATOR',
+    REF_PLANE: moon.barycenter || moon.j2000 ? 'FRAME' : 'BODY EQUATOR',
     OUT_UNITS: 'KM-D',
     CSV_FORMAT: 'YES',
     OBJ_DATA: 'NO'
@@ -261,6 +266,7 @@ function pointOn({ a, e, i, node, w }, E, out, k = 0) {
 // Where the moon is on this Julian day, in km from its planet, measured against the planet's equator
 // (x toward where the equator crosses Earth's, z toward the planet's north pole).
 // For barycenter moons it's from the balance point instead, in J2000 coordinates.
+// For j2000 moons it's from the planet, in J2000 coordinates.
 export function moonOffset(moon, jd, out = [0, 0, 0]) {
   const orbit = orbitAt(moon, jd);
   return pointOn(orbit, orbit.E, out);

@@ -66,7 +66,32 @@ test('a planet sits exactly on its orbit line, which goes once around', () => {
   const E = eccentricAnomaly({ ...orbit, M0: orbit.E - orbit.e * Math.sin(orbit.E), epoch: 0 }, 30);
   const [x, y, z] = pointAt(orbit, E);
   assert.ok(Math.hypot(x - later.x, y - later.y, z - later.z) * KM_PER_AU < 20000);
-  assert.equal(PLANETS.map(p => p.id).join(' '), 'mercury venus earth mars jupiter saturn uranus neptune pluto');
+  assert.equal(
+    PLANETS.map(p => p.id).join(' '),
+    'mercury venus earth mars jupiter saturn uranus neptune pluto ceres eris haumea makemake gonggong quaoar sedna orcus'
+  );
+});
+
+test('the dwarf planets past Pluto are where JPL Horizons puts them', () => {
+  const positions = geocentric(DATE);
+  const fromSun = id => ['x', 'y', 'z'].map(k => positions[id][k] - positions.sun[k]);
+  // Horizons vectors from the Sun's center for this date, in AU (J2000)
+  const horizons = {
+    eris: [85.05588555, 43.30250109, 0.03570706],
+    ceres: [-0.29800948, 2.34214435, 1.16541797],
+    sedna: [38.58171924, 72.14009107, 12.76406772]
+  };
+  for (const [id, want] of Object.entries(horizons)) {
+    const got = fromSun(id);
+    const off = Math.hypot(...got.map((v, k) => v - want[k]));
+    const degrees = (off / Math.hypot(...want)) * (180 / Math.PI);
+    assert.ok(degrees < 0.05, `${id} is ${degrees.toFixed(3)}° off`);
+  }
+  // its orbit line starts right at it
+  const orbit = planetOrbit('eris', DATE);
+  const start = ellipsePath(orbit, orbit.E, new Float64Array(91 * 3), 90);
+  const eris = fromSun('eris');
+  assert.ok(Math.hypot(start[0] - eris[0], start[1] - eris[1], start[2] - eris[2]) < 1e-9);
 });
 
 test('has a position for every body', () => {

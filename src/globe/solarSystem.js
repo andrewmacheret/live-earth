@@ -751,7 +751,7 @@ export function createSolarSystem(container, { onPick }) {
           );
           line.frustumCulled = false;
           line.visible = false;
-          (item.body.moon.barycenter ? bary : system).add(line);
+          (item.body.moon.barycenter || item.body.moon.j2000 ? bary : system).add(line);
           return { item, line };
         });
         return { planet, group: system, bary, moons, lines };
@@ -776,7 +776,8 @@ export function createSolarSystem(container, { onPick }) {
         fromEarthKm,
         fromPlanetKm: item.holder.position.distanceTo(byId[moon.planet].holder.position) * EARTH_RADIUS_KM,
         periodDays: moonPeriod(moon),
-        retrograde: moon.barycenter ? againstSpin(moon, new Date()) : moon.i > 90,
+        // a dwarf planet's spin isn't known, so there's nothing to go backward against
+        retrograde: moon.barycenter ? againstSpin(moon, new Date()) : !moon.j2000 && moon.i > 90,
         lightSeconds: fromEarthKm / 299792.458
       };
     },
@@ -962,6 +963,9 @@ export function createSolarSystem(container, { onPick }) {
             const planet = byId[system.planet].holder.position;
             const charon = byId['moon:charon']?.holder.position ?? planet;
             system.bary.matrix.setPosition(point.lerpVectors(planet, charon, CHARON_PULL));
+            item.holder.position.fromArray(moonOffset(moon, jd, v)).applyMatrix4(system.bary.matrix);
+          } else if (moon.j2000) {
+            system.bary.matrix.setPosition(byId[system.planet].holder.position);
             item.holder.position.fromArray(moonOffset(moon, jd, v)).applyMatrix4(system.bary.matrix);
           } else {
             item.holder.position.fromArray(moonOffset(moon, jd, v)).applyMatrix4(system.group.matrix);

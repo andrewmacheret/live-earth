@@ -4,7 +4,7 @@ import { articleFor, fetchSummary, trackerLinks } from './sats/about.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
 import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
 import { fromCompactPlanes } from './planes/compact.js';
-import { BODIES, BODY_BY_ID, nasaLink } from './space/bodies.js';
+import { BODIES, BODY_BY_ID, bodyLink, DWARF_PDES } from './space/bodies.js';
 import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodies.js';
 import { fromCompactMoons } from './space/moons.js';
 import { CRAFT_COLOR, fromCompactSpacecraft } from './space/spacecraft.js';
@@ -82,7 +82,8 @@ export default function App() {
       getJson('data/small-bodies.json')
         .then(data => {
           if (cancelled) return;
-          const records = fromCompactBodies(data);
+          // the dwarf planets are full bodies instead
+          const records = fromCompactBodies(data).filter(record => !DWARF_PDES.has(record.pdes));
           globe.setRocks(records);
           const counts = {};
           for (const record of records) counts[record.kind] = (counts[record.kind] || 0) + 1;
@@ -141,7 +142,8 @@ export default function App() {
         setCatalog({ records, counts, launches, recent, wiki, withArticles, indexById, generated: data.generated });
         const params = new URLSearchParams(location.search);
         const wanted = Number(params.get('sat'));
-        const linked = params.get('body');
+        // older links point at dwarf planets as asteroids, like rock:136199 for Eris
+        const linked = BODIES.find(b => b.pdes && params.get('body') === `rock:${b.pdes}`)?.id ?? params.get('body');
         // meteor showers are built in, so like planets they don't wait for anything to load
         const body = BODY_BY_ID[linked]?.id ?? (linked?.startsWith('shower:') && globe.solar.has(linked) ? linked : null);
         let start = records.findIndex(r => r.NORAD_CAT_ID === wanted);
@@ -1121,7 +1123,7 @@ function BodyPanel({ info, summary, now, onGo, onWatch, onClose }) {
           </button>
         </div>
       )}
-      <About summary={summary} links={[{ label: 'NASA', href: nasaLink(body) }]} />
+      <About summary={summary} links={[bodyLink(body)]} />
     </aside>
   );
 }

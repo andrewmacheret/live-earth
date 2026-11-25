@@ -1,4 +1,5 @@
-// The Sun, the Moon and the planets. Astronomy Engine works out where they are, right in the browser.
+// The Sun, the Moon, the planets and the dwarf planets. Astronomy Engine works out where most of them
+// are, right in the browser. It doesn't know the dwarf planets past Pluto, so those use JPL's orbits.
 import {
   Body,
   GeoMoon,
@@ -13,7 +14,7 @@ import {
   Rotation_EQJ_EQD
 } from 'astronomy-engine';
 import { EARTH_RADIUS_KM, toScene } from '../sats/frames.js';
-import { orbitFromState } from './smallBodies.js';
+import { eccentricAnomaly, jplLink, julianDay, orbitFromState, orbitOf, positionAt } from './smallBodies.js';
 
 // scene units (Earth radii) in one AU, the Earth's distance from the Sun
 export const AU = KM_PER_AU / EARTH_RADIUS_KM;
@@ -95,24 +96,60 @@ export const BODIES = [
     texture: null,
     nasa: 'dwarf-planets/pluto',
     dot: 4
-  })
+  }),
+  // pdes is JPL's number. elements are from JPL's Small-Body Database (sbdb.api), close enough for
+  // years either side of the epoch.
+  dwarf('ceres', 'Ceres', 469.7, '#a8a49c', '1', { e: 0.0796923, a: 2.76555, i: 10.58803, node: 80.24863, peri: 73.29421, M: 274.41935 }, { article: 'Ceres (dwarf planet)', nasa: 'dwarf-planets/ceres' }),
+  dwarf('eris', 'Eris', 1163, '#e8e6e0', '136199', { e: 0.4382385, a: 67.93395, i: 43.92583, node: 36.00477, peri: 150.79492, M: 211.77443 }, { article: 'Eris (dwarf planet)', nasa: 'dwarf-planets/eris' }),
+  dwarf('haumea', 'Haumea', 780, '#f0eee8', '136108', { e: 0.194443, a: 43.06029, i: 28.20847, node: 121.78606, peri: 240.69055, M: 223.21041 }, { nasa: 'dwarf-planets/haumea' }),
+  dwarf('makemake', 'Makemake', 715, '#d4a58a', '136472', { e: 0.158889, a: 45.57093, i: 29.02786, node: 79.29483, peri: 297.09227, M: 169.938 }, { nasa: 'dwarf-planets/makemake' }),
+  // not official dwarf planets yet, but big enough to be round
+  dwarf('gonggong', 'Gonggong', 615, '#c47a5a', '225088', { e: 0.504251, a: 66.86667, i: 30.89907, node: 336.83832, peri: 206.62328, M: 111.66454 }, { article: 'Gonggong (dwarf planet)', likely: true }),
+  dwarf('quaoar', 'Quaoar', 545, '#b98c74', '50000', { e: 0.0352002, a: 43.15618, i: 7.99158, node: 188.91912, peri: 163.20905, M: 292.84876 }, { article: '50000 Quaoar', likely: true }),
+  dwarf('sedna', 'Sedna', 500, '#c8553a', '90377', { e: 0.8598825, a: 543.71953, i: 11.92528, node: 144.50617, peri: 311.09877, M: 358.59569 }, { article: '90377 Sedna', likely: true }),
+  dwarf('orcus', 'Orcus', 455, '#9a9a96', '90482', { e: 0.2205241, a: 39.37687, i: 20.55681, node: 268.40535, peri: 73.56849, M: 189.09729 }, { article: '90482 Orcus', likely: true })
 ];
 
 function planet(id, name, radiusKm, periodDays, color, more = {}) {
   return { id, name, kind: 'Planet', radiusKm, periodDays, color, texture: `${id}.jpg`, article: name, nasa: id, dot: 5, ...more };
 }
 
+function dwarf(id, name, radiusKm, color, pdes, elements, { likely, ...more } = {}) {
+  const orbit = orbitOf({ ...elements, epoch: 2461200.5 });
+  return {
+    id,
+    name,
+    kind: likely ? 'Likely dwarf planet' : 'Dwarf planet',
+    radiusKm,
+    periodDays: (2 * Math.PI) / orbit.n,
+    color,
+    texture: null,
+    article: name,
+    nasa: null,
+    dot: 4,
+    pdes,
+    orbit,
+    ...more
+  };
+}
+
+// the asteroid numbers of the dwarf planets above, which the asteroid list leaves out
+
 // the bodies that go around the Sun, which get orbit lines
 export const PLANETS = BODIES.filter(body => body.periodDays && body.id !== 'moon');
 
 export const BODY_BY_ID = Object.fromEntries(BODIES.map(body => [body.id, body]));
 
+// the dwarf planets' asteroid numbers, so the asteroid list can leave them out
+export const DWARF_PDES = new Set(BODIES.filter(body => body.pdes).map(body => body.pdes));
+
 // straight up from the plane the planets orbit in, in J2000 coordinates
 const TILT = (23.4392911 * Math.PI) / 180;
 export const ECLIPTIC_NORTH = { x: 0, y: -Math.sin(TILT), z: Math.cos(TILT) };
 
-export function nasaLink(body) {
-  return `https://science.nasa.gov/${body.nasa}/`;
+// NASA's page for the body, or JPL's for the dwarf planets NASA has no page for
+export function bodyLink(body) {
+  return body.nasa ? { label: 'NASA', href: `https://science.nasa.gov/${body.nasa}/` } : { label: 'NASA JPL', href: jplLink(body.pdes) };
 }
 
 // Returns a function that turns J2000 coordinates (what Astronomy Engine gives) into scene coordinates.
@@ -131,6 +168,8 @@ export function sceneFrame(date) {
 
 // The ellipse a planet is on right now (see orbitFromState), in AU from the Sun (J2000)
 export function planetOrbit(id, date) {
+  const { orbit } = BODY_BY_ID[id];
+  if (orbit) return { ...orbit, E: eccentricAnomaly(orbit, julianDay(date)) };
   return orbitFromState(HelioState(BODY_BY_ID[id].name, date));
 }
 
@@ -143,7 +182,10 @@ export function geocentric(date) {
     if (body.id === 'earth') out.earth = { x: 0, y: 0, z: 0 };
     else if (body.id === 'moon') out.moon = GeoMoon(time);
     else if (body.id === 'sun') out.sun = { x: -earth.x, y: -earth.y, z: -earth.z };
-    else {
+    else if (body.orbit) {
+      const [x, y, z] = positionAt(body.orbit, julianDay(date));
+      out[body.id] = { x: x - earth.x, y: y - earth.y, z: z - earth.z };
+    } else {
       const v = HelioVector(body.name, time);
       out[body.id] = { x: v.x - earth.x, y: v.y - earth.y, z: v.z - earth.z };
     }
@@ -210,7 +252,9 @@ export function lagrangePoints(date) {
 }
 
 // The body's north pole (J2000) and how far it has turned, in degrees, for spinning its map.
+// Most dwarf planets' poles aren't known, and they have no maps to turn, so they just point up.
 export function spinAxis(id, date) {
+  if (BODY_BY_ID[id].orbit) return { north: ECLIPTIC_NORTH, spin: 0 };
   const { north, spin } = RotationAxis(BODY_BY_ID[id].name, date);
   return { north, spin };
 }
