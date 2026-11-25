@@ -10,11 +10,13 @@ import { fromCompactMoons } from './space/moons.js';
 import { CRAFT_COLOR, fromCompactSpacecraft } from './space/spacecraft.js';
 import { PARENT_BY_ID, peakLabel, SHOWERS } from './space/meteors.js';
 import { nextLunarEclipse, nextSolarEclipse, placeLabel } from './space/eclipses.js';
+import { cometEvents, craftEvents, skyEvents } from './space/events.js';
 import { NOTCHES, SLIDER_MAX, sliderToSpeed, speedLabel, speedToSlider } from './speed.js';
 
 const ISS = 25544;
 const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 const number = new Intl.NumberFormat();
+const DAY_MS = 86400000;
 // checking costs almost nothing when the file hasn't changed, since the browser asks "has it changed?"
 const PLANES_CHECK_MS = 60000;
 
@@ -46,6 +48,7 @@ export default function App() {
   useEffect(() => setView(v => (v === 'system' && anchor === 'sun' ? v : anchor)), [anchor]);
   // moons, asteroids, comets and spacecraft load the first time you zoom out or search
   const [moons, setMoons] = useState(null);
+  const [eventsOpen, setEventsOpen] = useState(false);
   const [rocks, setRocks] = useState(null);
   const [crafts, setCrafts] = useState(null);
   const loadSpaceRef = useRef(null);
@@ -331,6 +334,39 @@ export default function App() {
     setSpeed(60);
     globe.watchEclipse(eclipse);
   };
+
+  // jump to an event from events.js, a little early so you can watch it happen
+  const watchEvent = event => {
+    const { view } = event;
+    if (view.type === 'eclipse') watchEclipse(view.eclipse);
+    else {
+      const globe = globeRef.current;
+      const speed = view.speed ?? 1;
+      globe.setClock({ simStart: event.date.getTime() - (view.lead ?? 0), speed });
+      setSpeed(speed);
+      globe.watchEvent(view);
+    }
+    if (narrow) setEventsOpen(false);
+  };
+
+  const toggleEvents = () => {
+    if (!eventsOpen) loadSpaceRef.current?.();
+    setEventsOpen(!eventsOpen);
+  };
+
+  // Working these out takes a moment, so it's done for 400 days at a time and redone once a month
+  // of sim time has gone by. Flybys and comets join once the spacecraft and asteroids load.
+  const eventsMonth = Math.floor(simTime / (30 * DAY_MS));
+  const allEvents = useMemo(() => {
+    if (!eventsOpen) return null;
+    const from = new Date(eventsMonth * 30 * DAY_MS);
+    const rockList = rocks?.records ?? [];
+    return [...skyEvents(from, 400), ...(crafts ? craftEvents(crafts.list, from, 400, rockList) : []), ...cometEvents(rockList, from, 400)].sort(
+      (a, b) => a.date - b.date
+    );
+  }, [eventsOpen, eventsMonth, crafts, rocks]);
+  const today = new Date(simTime).setHours(0, 0, 0, 0);
+  const events = allEvents?.filter(event => event.date >= today && event.date - today < 365 * DAY_MS);
 
   const goLive = () => {
     globeRef.current.setClock({ simStart: Date.now(), speed: 1 });
@@ -627,6 +663,7 @@ export default function App() {
       )}
 
       <section className="panel bottom-right clock">
+        {events && <EventList events={events} now={simTime} loading={!crafts || !rocks} onPick={watchEvent} />}
         <div className="time">
           {live ? (
             <span className="badge live">LIVE</span>
@@ -667,7 +704,12 @@ export default function App() {
             ))}
           </div>
         </div>
-        <p className="speed-label">{speedLabel(speed)}</p>
+        <p className="speed-label">
+          {speedLabel(speed)} ·{' '}
+          <button className="link-button" onClick={toggleEvents} aria-expanded={eventsOpen}>
+            {eventsOpen ? 'Hide coming up' : 'Coming up'}
+          </button>
+        </p>
       </section>
 
       {focus && (
@@ -1125,6 +1167,40 @@ function BodyPanel({ info, summary, now, onGo, onWatch, onClose }) {
       )}
       <About summary={summary} links={[bodyLink(body)]} />
     </aside>
+  );
+}
+
+const EVENT_COLORS = { eclipse: '#ffc861', shower: '#8fd8ff', planet: '#e9d3a1', earth: '#7cb4ff', craft: CRAFT_COLOR, comet: '#b7dcff' };
+
+function EventList({ events, now, loading, onPick }) {
+  const until = date => {
+    const days = Math.round((new Date(date).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / DAY_MS);
+    if (days <= 0) return 'today';
+    if (days === 1) return 'tomorrow';
+    return days < 60 ? `in ${days} days` : `in ${Math.round(days / 30.4)} months`;
+  };
+  return (
+    <div className="events">
+      <h2>Coming up</h2>
+      <ul>
+        {events.map(event => (
+          <li key={event.id}>
+            <button onClick={() => onPick(event)}>
+              <span className="swatch" style={{ background: EVENT_COLORS[event.kind] }} />
+              <span className="what">
+                <span className="title">{event.title}</span>
+                <span className="detail">{event.detail}</span>
+              </span>
+              <span className="when">
+                {event.date.toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                <span className="muted">{until(event.date)}</span>
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      {loading && <p className="hint">Loading spacecraft flybys and comets…</p>}
+    </div>
   );
 }
 

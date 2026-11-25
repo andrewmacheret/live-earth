@@ -410,6 +410,38 @@ export class Globe {
     else this.goTo('moon', { direction: () => moon().negate() });
   }
 
+  // Point the camera at an event's view from events.js. The page sets the clock.
+  watchEvent(view) {
+    if (view.type === 'eclipse') return this.watchEclipse(view.eclipse);
+    if (view.type === 'body') {
+      this.selectBody(view.id);
+      return this.goTo(view.id);
+    }
+    const north = this.eclipticNorth();
+    if (view.type === 'earth') {
+      this.selectBody('earth');
+      // from the side, a little toward the Sun, so the day side and the tilted poles both show
+      return this.goTo('earth', {
+        distance: HOME_DISTANCE * 1.3,
+        direction: () => {
+          const toSun = this.solar.positionOf('sun', new THREE.Vector3()).normalize();
+          return toSun.clone().cross(north).normalize().add(toSun.multiplyScalar(0.5)).add(north.clone().multiplyScalar(0.2)).normalize();
+        }
+      });
+    }
+    // two planets close in the sky: look past the Earth's edge toward them, the way you'd see them from the ground
+    this.selectBody(view.ids[0]);
+    this.solar.feature(view.ids);
+    this.goTo('earth', {
+      distance: HOME_DISTANCE * 1.6,
+      direction: () => {
+        const [a, b] = view.ids.map(id => this.solar.positionOf(id, new THREE.Vector3()).normalize());
+        // turned sideways, so the pair shows just past the Earth's edge
+        return a.add(b).normalize().applyAxisAngle(north, THREE.MathUtils.degToRad(20)).negate();
+      }
+    });
+  }
+
   setAuroraHidden(hide) {
     this.auroraHidden = hide;
   }

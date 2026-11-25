@@ -377,6 +377,8 @@ export function createSolarSystem(container, { onPick }) {
   const items = BODIES.map(makeItem);
   const byId = Object.fromEntries(items.map(item => [item.body.id, item]));
   const labelOrder = [...LABEL_ORDER];
+  // bodies that keep their names even from close to the Earth, like the picked one
+  let featured = new Set();
 
   // Moons of the other planets, once they've loaded. They're bodies like the planets, with ids like 'moon:io'.
   // Each planet's moons are placed and drawn in a group turned to that planet's equator, in km.
@@ -762,6 +764,11 @@ export function createSolarSystem(container, { onPick }) {
       moonsShown = !hide;
     },
 
+    // keep these bodies' names showing from close to the Earth too, until the next pick
+    feature(ids) {
+      for (const id of ids) featured.add(id);
+    },
+
     // Facts for the info panel about a moon
     moonFacts(id) {
       const item = byId[id];
@@ -858,6 +865,7 @@ export function createSolarSystem(container, { onPick }) {
 
     // highlight a rock's orbit or a spacecraft's path, or pass anything else to clear them
     selectSmall(id) {
+      featured = new Set(id ? [id] : []);
       rocks?.select(rockIndex(id));
       selectedShower = showerItem(id) ?? null;
       streams.material.uniforms.uSelected.value = selectedShower ? PARENTS.indexOf(PARENT_BY_ID[selectedShower.shower.parent]) : -1;
@@ -1110,18 +1118,26 @@ export function createSolarSystem(container, { onPick }) {
         const item = byId[id];
         const { label, holder } = item;
         let show = !!item.screen && item.screenPx < 0.3 * Math.min(width, height);
-        // close to the Earth the planets are just dots in the sky, so only the Sun and Moon get names
-        if (show && id !== 'sun' && id !== 'moon') show = earthDistance > 40;
+        // close to the Earth the planets are just dots in the sky, so only the Sun, the Moon and picked ones get names
+        if (show && id !== 'sun' && id !== 'moon' && !featured.has(id)) show = earthDistance > 40;
         if (show && item.body.moon) show = item.fade > 0.9 && item.apartPx > 16;
         if (show && id !== 'earth') show = !behindEarth(camera.position, holder.position);
         if (show) show = !hidden(item);
         let x = 0;
         let y = 0;
         if (show) {
-          x = item.screen.x + Math.max(3, item.screenPx / 2) + 4;
+          const textWidth = label.textContent.length * 7 + 10;
+          const gap = Math.max(3, item.screenPx / 2) + 4;
           y = item.screen.y - 9;
-          const box = { left: x, right: x + label.textContent.length * 7 + 10, top: y, bottom: y + 18 };
-          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+          const free = box => !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+          // right of the dot, or left of it if something's already there
+          x = item.screen.x + gap;
+          let box = { left: x, right: x + textWidth, top: y, bottom: y + 18 };
+          if (!free(box)) {
+            x = item.screen.x - gap - textWidth;
+            box = { left: x, right: x + textWidth, top: y, bottom: y + 18 };
+          }
+          show = free(box);
           if (show) placed.push(box);
         }
         if (label.hidden === show) label.hidden = !show;

@@ -645,6 +645,78 @@ h1 {
   text-align: center;
 }
 
+.speed-label .link-button {
+  font-size: 12px;
+}
+
+/* the list of things coming up sits on top of the clock, inside the same panel */
+.events {
+  margin: -2px 0 10px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.events h2 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.events ul {
+  max-height: min(42vh, 380px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.events li button {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 4px;
+  background: none;
+  border: 0;
+  border-radius: 6px;
+  color: inherit;
+  text-align: left;
+}
+
+.events li button:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.events .swatch {
+  flex: none;
+  margin-top: 5px;
+}
+
+.events .what {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.events .title {
+  font-size: 13px;
+}
+
+.events .detail {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.events .when {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
 .follow {
   padding: 6px 10px;
   font-size: 13px;
