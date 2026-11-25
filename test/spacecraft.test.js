@@ -86,6 +86,7 @@ test('downloads each spacecraft, asks for less when the data stops sooner, and s
   const data = await downloadSpacecraft({ fetchImpl, now: NOW, log: message => logs.push(message) });
   assert.equal(data.count, SPACECRAFT.length - 1);
   assert.ok(!data.spacecraft.some(entry => entry.id === 'lucy'));
+  assert.deepEqual(data.skipped, ['lucy']);
   assert.ok(logs.some(message => message.includes('Lucy')));
 
   const heraCalls = calls.filter(call => call.id === -91);

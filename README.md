@@ -159,9 +159,13 @@ npm run build
 
 Once a day, the Canary workflow (`.github/workflows/canary.yml`), started by [andrewmacheret/canary](https://github.com/andrewmacheret/canary), checks:
 
-- the page and its scripts and styles
+- the page, its scripts and styles, and the textures, star catalog and worker those scripts load
 - that the Lambda rewrote the satellite, asteroid, spacecraft and moon data in the last 30 hours
+- inside those files, that every CelesTrak group and the Wikidata links were updated in the last 30 hours, that every kind of asteroid and comet came back, and that no spacecraft or moon was skipped. The Lambda keeps old data when a source fails, so a file's age alone doesn't show it.
+- that NOAA's aurora forecast is less than 3 hours old
 - that NASA GIBS (clouds) and Wikipedia's summary API answer
+
+It doesn't call CelesTrak or JPL itself. CelesTrak only allows one download every 2 hours, and the files already show whether the Lambda's calls worked.
 
 ## Deploy
 

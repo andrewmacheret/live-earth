@@ -73,6 +73,7 @@ test('downloads every moon and skips one that fails', async () => {
   const logs = [];
   const data = await downloadMoons({ fetchImpl, now: NOW, log: message => logs.push(message) });
   assert.equal(data.count, MOONS.length - 1);
+  assert.deepEqual(data.skipped, ['hyperion']);
   assert.ok(logs.some(message => message.includes('Hyperion')));
   const moons = fromCompactMoons(JSON.parse(JSON.stringify(data)));
   assert.equal(moons.find(moon => moon.id === 'titan').planet, 'saturn');

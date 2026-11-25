@@ -13,16 +13,56 @@
 <body>
 <h1>Live Earth health check</h1>
 <script>
-// The LiveEarth Lambda rewrites the data files every night at 02:30 UTC
+// The LiveEarth Lambda rewrites the data files every night at 02:30 UTC. It keeps old data for
+// any source that fails, so the checks below also look inside each file for what it couldn't update.
 const day = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10);
+const hoursAgo = (iso) => (Date.now() - Date.parse(iso)) / 3600000;
+const notSkipped = (data, what) => {
+  if (!Array.isArray(data.skipped)) throw new Error("doesn't say what it skipped");
+  if (data.skipped.length) throw new Error(`couldn't get ${data.skipped.join(', ')}`);
+  return `all ${data.count} ${what}`;
+};
+const cloudsUrl = (daysAgo) => 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_CorrectedReflectance_TrueColor&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=128&FORMAT=image/jpeg&TIME=' + day(daysAgo);
+
 healthcheck([
-  { name: 'Page', url: '../', assets: true, contains: 'Live Earth</title>' },
-  { name: 'Satellites (CelesTrak)', url: '../data/satellites.json', maxAgeHours: 30 },
-  { name: 'Asteroids and comets (JPL)', url: '../data/small-bodies.json', maxAgeHours: 30 },
-  { name: 'Spacecraft (JPL Horizons)', url: '../data/spacecraft.json', maxAgeHours: 30 },
-  { name: 'Moons (JPL Horizons)', url: '../data/moons.json', maxAgeHours: 30 },
-  { name: 'Clouds (NASA GIBS)', image: true,
-    url: 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_CorrectedReflectance_TrueColor&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=128&FORMAT=image/jpeg&TIME=' + day(2) },
+  // the page, its scripts, and the textures, star catalog and worker those scripts load
+  { name: 'Page', url: '../', assets: true, contains: 'Live Earth</title>', find: [
+    'react-[\\w-]{8}\\.js', 'three-[\\w-]{8}\\.js', 'astronomy-[\\w-]{8}\\.js', 'propagate\\.worker-[\\w-]{8}\\.js',
+    'sky-[\\w-]{8}\\.json',
+    'earth-day-[\\w-]{8}\\.jpg', 'earth-night-[\\w-]{8}\\.jpg', 'sun-[\\w-]{8}\\.jpg', 'moon-[\\w-]{8}\\.jpg',
+    'mercury-[\\w-]{8}\\.jpg', 'venus_atmosphere-[\\w-]{8}\\.jpg', 'mars-[\\w-]{8}\\.jpg', 'jupiter-[\\w-]{8}\\.jpg',
+    'saturn-[\\w-]{8}\\.jpg', 'saturn_ring-[\\w-]{8}\\.png', 'uranus-[\\w-]{8}\\.jpg', 'neptune-[\\w-]{8}\\.jpg'
+  ] },
+  { name: 'Link preview image', url: '../preview.jpg', image: true },
+
+  // saved by the Lambda
+  { name: 'Satellites (CelesTrak)', url: '../data/satellites.json', maxAgeHours: 30, json: (data) => {
+    const stale = data.groups.filter((group) => !group.fetched || hoursAgo(group.fetched) > 30).map((group) => group.name);
+    if (stale.length) throw new Error(`these groups weren't updated in 30 hours: ${stale.join(', ')}`);
+    if (data.count < 1000) throw new Error(`only ${data.count} satellites`);
+    return `${data.count} satellites in ${data.groups.length} groups`;
+  } },
+  { name: 'Wikipedia links (Wikidata)', url: '../data/satellites.json', json: (data) => {
+    if (!data.wikiFetched || hoursAgo(data.wikiFetched) > 30) throw new Error(`last updated ${data.wikiFetched || 'never'}`);
+    return `${Object.keys(data.wiki).length} links`;
+  } },
+  { name: 'Asteroids and comets (JPL Small-Body Database)', url: '../data/small-bodies.json', maxAgeHours: 30, json: (data) => {
+    const empty = data.kinds.filter((kind, i) => !data.columns.kind.includes(i));
+    if (empty.length) throw new Error(`none of these: ${empty.join(', ')}`);
+    return `${data.count} rocks`;
+  } },
+  { name: 'Spacecraft (JPL Horizons)', url: '../data/spacecraft.json', maxAgeHours: 30, json: (data) => notSkipped(data, 'spacecraft') },
+  { name: 'Moons (JPL Horizons)', url: '../data/moons.json', maxAgeHours: 30, json: (data) => notSkipped(data, 'moons') },
+
+  // fetched by the page itself
+  { name: 'Aurora (NOAA)', url: 'https://services.swpc.noaa.gov/json/ovation_aurora_latest.json', json: (data) => {
+    const age = hoursAgo(data['Observation Time']);
+    if (!(age < 3)) throw new Error(`forecast is from ${data['Observation Time']}`);
+    if (data.coordinates.length !== 360 * 181) throw new Error(`${data.coordinates.length} points instead of ${360 * 181}`);
+    return `forecast from ${Math.round(age * 60)} min ago`;
+  } },
+  { name: 'Clouds yesterday (NASA GIBS)', image: true, url: cloudsUrl(1) },
+  { name: 'Clouds the day before (NASA GIBS)', image: true, url: cloudsUrl(2) },
   { name: 'Wikipedia summaries', url: 'https://en.wikipedia.org/api/rest_v1/page/summary/International_Space_Station', contains: 'International Space Station' }
 ]);
 </script>

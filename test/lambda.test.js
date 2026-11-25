@@ -101,6 +101,7 @@ test('the Lambda adds Wikipedia links, and keeps the old ones if Wikidata fails'
     loadPrevious: async () => null
   })();
   assert.deepEqual(saved.wiki, { 100000: 'Starlink' });
+  assert.equal(saved.wikiFetched, saved.generated);
   const previous = saved;
   await createHandler({
     ...options,
@@ -110,6 +111,8 @@ test('the Lambda adds Wikipedia links, and keeps the old ones if Wikidata fails'
     loadPrevious: async () => previous
   })();
   assert.deepEqual(saved.wiki, { 100000: 'Starlink' });
+  // the old links keep their old date, so the health check sees Wikidata failed
+  assert.equal(saved.wikiFetched, previous.wikiFetched);
 });
 
 const fakeRocks = async () =>
