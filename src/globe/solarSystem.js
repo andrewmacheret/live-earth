@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { AU, BODIES, geocentric, KM_PER_AU, planetOrbit, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
+import { AU, BODIES, geocentric, KM_PER_AU, lagrangePoints, planetOrbit, PLANETS, sceneFrame, spinAxis } from '../space/bodies.js';
 import {
   ellipsePath,
   jplLink,
@@ -88,7 +88,7 @@ const dotFragment = /* glsl */ `
   }
 `;
 
-// Saturn's rings, lit from the side the Sun is on
+// rings, lit from the side the Sun is on
 const ringFragment = /* glsl */ `
   uniform sampler2D map;
   uniform float uHasMap;
@@ -126,6 +126,29 @@ function surface(body, radius) {
   return mesh;
 }
 
+// A ring map drawn from a list of [startKm, endKm, opacity] bands, for the planets with no ring picture.
+// Some rings are only a few km wide, thinner than one pixel of the map, so they still get some opacity.
+function bandMap({ innerKm, outerKm, color, bands }) {
+  const width = 1024;
+  const data = new Uint8Array(width * 4);
+  const rgb = new THREE.Color(color);
+  const pixelKm = (outerKm - innerKm) / width;
+  for (let i = 0; i < width; i++) {
+    const from = innerKm + i * pixelKm;
+    let alpha = 0;
+    for (const [start, end, opacity] of bands) {
+      const overlap = Math.min(end, from + pixelKm) - Math.max(start, from);
+      if (overlap > 0) alpha = Math.max(alpha, opacity * Math.min(1, 0.5 + overlap / pixelKm));
+    }
+    data.set([rgb.r * 255, rgb.g * 255, rgb.b * 255, alpha * 255], i * 4);
+  }
+  const texture = new THREE.DataTexture(data, width, 1);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  texture.magFilter = THREE.LinearFilter;
+  texture.needsUpdate = true;
+  return texture;
+}
+
 // a flat ring around the equator. The ring map runs from the inner edge to the outer one.
 function rings(body) {
   const inner = body.rings.innerKm / EARTH_RADIUS_KM;
@@ -153,6 +176,10 @@ function rings(body) {
       depthWrite: false
     })
   );
+  if (body.rings.bands) {
+    ring.material.uniforms.map.value = bandMap(body.rings);
+    ring.material.uniforms.uHasMap.value = 1;
+  }
   // RingGeometry lies flat in x and y, but the equator is x and z
   ring.rotation.x = -Math.PI / 2;
   return ring;
@@ -363,8 +390,18 @@ export function createSolarSystem(container, { onPick }) {
   const loadTexture = item => {
     item.textureRequested = true;
     if (item.body.texture) loadInto(item.body.texture, item.mesh);
-    if (item.ring) loadInto(`${item.body.id}_ring.png`, item.ring);
+    if (item.ring && !item.body.rings.bands) loadInto(`${item.body.id}_ring.png`, item.ring);
   };
+
+  // Lagrange points are just marks with names, and can't be picked
+  const lagrange = lagrangePoints(new Date()).map(p => {
+    const label = document.createElement('div');
+    label.className = 'lagrange-mark';
+    label.textContent = p.name;
+    label.hidden = true;
+    labelLayer.appendChild(label);
+    return { id: p.id, between: p.between, label, position: new THREE.Vector3(), screen: null, distance: 0, screenPx: 0 };
+  });
 
   let positions = null;
   const point = new THREE.Vector3();
@@ -666,6 +703,7 @@ export function createSolarSystem(container, { onPick }) {
       geoFrame.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU));
       geoFrame.matrixWorldNeedsUpdate = true;
       if (now !== orbitsTime) drawOrbits(now);
+      lagrangePoints(date).forEach((p, i) => lagrange[i].position.set(...frame(p.x, p.y, p.z, v)));
       jd = julianDay(now);
       for (const system of moonSystems) {
         // the planet's equator: x where it crosses Earth's equator, z its north pole
@@ -724,7 +762,7 @@ export function createSolarSystem(container, { onPick }) {
         }
         if (mesh) {
           // rings reach past the planet, so they count toward its size
-          mesh.visible = item.screenPx * (item.ring ? 2.4 : 1) > 0.5;
+          mesh.visible = item.screenPx * (item.ring ? (2 * body.rings.outerKm) / body.radiusKm : 1) > 0.5;
           if (mesh.visible && !item.textureRequested && item.screenPx > 4) loadTexture(item);
           if (body.id !== 'sun') {
             sunView.subVectors(sun, holder.position).transformDirection(camera.matrixWorldInverse);
@@ -830,6 +868,27 @@ export function createSolarSystem(container, { onPick }) {
           x = item.screen.x + 7;
           y = item.screen.y - 9;
           const box = { left: x, right: x + label.textContent.length * 6.5 + 10, top: y, bottom: y + 18 };
+          show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
+          if (show) placed.push(box);
+        }
+        if (label.hidden === show) label.hidden = !show;
+        if (show) label.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
+      }
+
+      // Lagrange points last. Each shows once it's far enough on screen from both of its bodies.
+      for (const item of lagrange) {
+        const { label, position } = item;
+        let show = !!projectOne(item, position, camera, width, height);
+        if (show) {
+          const apart = Math.min(...item.between.map(id => byId[id].screen ? Math.hypot(byId[id].screen.x - item.screen.x, byId[id].screen.y - item.screen.y) : Infinity));
+          show = apart > 24 && !behindEarth(camera.position, position) && !hidden(item);
+        }
+        let x = 0;
+        let y = 0;
+        if (show) {
+          x = item.screen.x - 4;
+          y = item.screen.y - 8;
+          const box = { left: x + 8, right: x + 12 + label.textContent.length * 5.5, top: y, bottom: y + 16 };
           show = !placed.some(o => box.left < o.right && box.right > o.left && box.top < o.bottom && box.bottom > o.top);
           if (show) placed.push(box);
         }

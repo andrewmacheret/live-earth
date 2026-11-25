@@ -2,6 +2,7 @@
 import {
   Body,
   GeoMoon,
+  GeoMoonState,
   HelioState,
   HelioVector,
   Illumination,
@@ -39,10 +40,56 @@ export const BODIES = [
   planet('venus', 'Venus', 6051.8, 224.7, '#e9d3a1', { texture: 'venus_atmosphere.jpg' }),
   planet('earth', 'Earth', 6371, 365.26, '#7cb4ff', { texture: null }),
   planet('mars', 'Mars', 3389.5, 686.98, '#e07a4f'),
-  planet('jupiter', 'Jupiter', 69911, 4332.59, '#d9b38c'),
+  planet('jupiter', 'Jupiter', 69911, 4332.59, '#d9b38c', {
+    // the halo, the main ring, then the two faint gossamer rings
+    rings: {
+      innerKm: 92000,
+      outerKm: 226000,
+      color: '#a08670',
+      bands: [
+        [92000, 122500, 0.08],
+        [122500, 129000, 0.45],
+        [129000, 182000, 0.07],
+        [182000, 226000, 0.04]
+      ]
+    }
+  }),
   planet('saturn', 'Saturn', 58232, 10759.22, '#e8d29b', { rings: { innerKm: 74500, outerKm: 140220 } }),
-  planet('uranus', 'Uranus', 25362, 30688.5, '#a9e3ea'),
-  planet('neptune', 'Neptune', 24622, 60195, '#6b8cf0'),
+  planet('uranus', 'Uranus', 25362, 30688.5, '#a9e3ea', {
+    // the 13 narrow rings, from ring 6 out to epsilon, the widest
+    rings: {
+      innerKm: 41000,
+      outerKm: 52000,
+      color: '#8f9aa0',
+      bands: [
+        [41837, 41839, 0.5],
+        [42234, 42236, 0.5],
+        [42571, 42573, 0.5],
+        [44718, 44726, 0.6],
+        [45661, 45672, 0.6],
+        [47176, 47178, 0.5],
+        [47627, 47630, 0.5],
+        [48300, 48307, 0.6],
+        [50024, 50026, 0.35],
+        [51129, 51169, 0.9]
+      ]
+    }
+  }),
+  planet('neptune', 'Neptune', 24622, 60195, '#6b8cf0', {
+    // Galle, Le Verrier, the wide faint Lassell, Arago, then Adams
+    rings: {
+      innerKm: 40000,
+      outerKm: 63500,
+      color: '#8c8f99',
+      bands: [
+        [40900, 42900, 0.12],
+        [53150, 53260, 0.5],
+        [53260, 57200, 0.08],
+        [57150, 57250, 0.35],
+        [62910, 62950, 0.6]
+      ]
+    }
+  }),
   planet('pluto', 'Pluto', 1188.3, 90560, '#d8c2a6', {
     kind: 'Dwarf planet',
     texture: null,
@@ -101,6 +148,64 @@ export function geocentric(date) {
       out[body.id] = { x: v.x - earth.x, y: v.y - earth.y, z: v.z - earth.z };
     }
   }
+  return out;
+}
+
+// How much heavier the smaller body is than the bigger one, for the Lagrange points
+const MASS_RATIO = { earth: 3.0404e-6, jupiter: 9.5479e-4, moon: 0.012150 };
+
+// turn v by angle around the axis straight up from the plane that v and its speed w move in
+function turn(v, w, angle) {
+  const h = { x: v.y * w.z - v.z * w.y, y: v.z * w.x - v.x * w.z, z: v.x * w.y - v.y * w.x };
+  const length = Math.hypot(h.x, h.y, h.z);
+  h.x /= length;
+  h.y /= length;
+  h.z /= length;
+  const c = Math.cos(angle);
+  const s = Math.sin(angle);
+  return {
+    x: v.x * c + (h.y * v.z - h.z * v.y) * s,
+    y: v.y * c + (h.z * v.x - h.x * v.z) * s,
+    z: v.z * c + (h.x * v.y - h.y * v.x) * s
+  };
+}
+
+// The Lagrange points, where a small thing can stay put compared to two bodies, like Webb at the
+// Sun and Earth's L2. Returns [{ id, name, between: [big, small], x, y, z }] in AU from the Earth (J2000).
+// L4 runs 60 degrees ahead of the smaller body, and L5 60 degrees behind.
+export function lagrangePoints(date) {
+  const time = MakeTime(date);
+  const out = [];
+  const add = (system, between, n, p) => out.push({ id: `${system}-l${n}`, name: `${between.map(id => BODY_BY_ID[id].name).join('–')} L${n}`, between, ...p });
+  const plus = (a, b, k = 1) => ({ x: a.x + b.x * k, y: a.y + b.y * k, z: a.z + b.z * k });
+  const scale = (a, k) => ({ x: a.x * k, y: a.y * k, z: a.z * k });
+
+  // Sun and Earth. L1 and L2 sit about 1.5 million km from the Earth, toward and away from the Sun.
+  const earth = HelioState(Body.Earth, time);
+  const e = { x: earth.x, y: earth.y, z: earth.z };
+  const ev = { x: earth.vx, y: earth.vy, z: earth.vz };
+  const hill = Math.cbrt(MASS_RATIO.earth / 3);
+  add('sun-earth', ['sun', 'earth'], 1, scale(e, -hill));
+  add('sun-earth', ['sun', 'earth'], 2, scale(e, hill));
+  add('sun-earth', ['sun', 'earth'], 3, scale(e, -2 - (5 * MASS_RATIO.earth) / 12));
+  add('sun-earth', ['sun', 'earth'], 4, plus(turn(e, ev, Math.PI / 3), e, -1));
+  add('sun-earth', ['sun', 'earth'], 5, plus(turn(e, ev, -Math.PI / 3), e, -1));
+
+  // Earth and Moon. These numbers are where the points sit along the Earth to Moon line.
+  const moon = GeoMoonState(time);
+  const m = { x: moon.x, y: moon.y, z: moon.z };
+  const mv = { x: moon.vx, y: moon.vy, z: moon.vz };
+  add('earth-moon', ['earth', 'moon'], 1, scale(m, 0.8491));
+  add('earth-moon', ['earth', 'moon'], 2, scale(m, 1.1678));
+  add('earth-moon', ['earth', 'moon'], 3, scale(m, -0.9929));
+  add('earth-moon', ['earth', 'moon'], 4, turn(m, mv, Math.PI / 3));
+  add('earth-moon', ['earth', 'moon'], 5, turn(m, mv, -Math.PI / 3));
+
+  // Sun and Jupiter, just L4 and L5, where the trojan asteroids gather
+  const jupiter = HelioState(Body.Jupiter, time);
+  const jv = { x: jupiter.vx, y: jupiter.vy, z: jupiter.vz };
+  add('sun-jupiter', ['sun', 'jupiter'], 4, plus(turn(jupiter, jv, Math.PI / 3), e, -1));
+  add('sun-jupiter', ['sun', 'jupiter'], 5, plus(turn(jupiter, jv, -Math.PI / 3), e, -1));
   return out;
 }
 

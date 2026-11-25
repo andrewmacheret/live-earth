@@ -6,6 +6,7 @@ import {
   bodyFacts,
   geocentric,
   KM_PER_AU,
+  lagrangePoints,
   phaseName,
   planetOrbit,
   PLANETS,
@@ -72,4 +73,32 @@ test('has a position for every body', () => {
   const positions = geocentric(DATE);
   for (const body of BODIES) assert.ok(positions[body.id], body.id);
   assert.deepEqual(positions.earth, { x: 0, y: 0, z: 0 });
+});
+
+test('Lagrange points sit where they should between their two bodies', () => {
+  const date = new Date('2026-11-24T00:00:00Z');
+  const g = geocentric(date);
+  const km = (p, id) => Math.hypot(p.x - g[id].x, p.y - g[id].y, p.z - g[id].z) * KM_PER_AU;
+  const points = Object.fromEntries(lagrangePoints(date).map(p => [p.id, p]));
+  assert.equal(points['sun-earth-l2'].name, 'Sun–Earth L2');
+  // L1 and L2 are about 1.5 million km from the Earth, on either side
+  for (const id of ['sun-earth-l1', 'sun-earth-l2']) assert.ok(Math.abs(km(points[id], 'earth') - 1.5e6) < 0.05e6);
+  assert.ok(km(points['sun-earth-l1'], 'sun') < km(g.earth, 'sun'));
+  assert.ok(km(points['sun-earth-l2'], 'sun') > km(g.earth, 'sun'));
+  // L4 and L5 make equal-sided triangles with their two bodies
+  for (const [id, a, b] of [
+    ['sun-earth-l4', 'sun', 'earth'],
+    ['earth-moon-l5', 'earth', 'moon'],
+    ['sun-jupiter-l4', 'sun', 'jupiter']
+  ]) {
+    const side = km(g[b], a);
+    assert.ok(Math.abs(km(points[id], a) / side - 1) < 1e-9);
+    assert.ok(Math.abs(km(points[id], b) / side - 1) < 1e-9);
+  }
+  // L4 is ahead of the Earth: going a little forward in time moves the Earth toward it
+  const later = geocentric(new Date(date.getTime() + 86400000));
+  const sunNow = g.sun;
+  const earthLater = { x: later.earth.x - later.sun.x + sunNow.x, y: later.earth.y - later.sun.y + sunNow.y, z: later.earth.z - later.sun.z + sunNow.z };
+  const l4 = points['sun-earth-l4'];
+  assert.ok(Math.hypot(l4.x - earthLater.x, l4.y - earthLater.y, l4.z - earthLater.z) < Math.hypot(l4.x, l4.y, l4.z));
 });
