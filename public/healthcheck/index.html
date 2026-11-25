@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en-US">
+<head>
+<meta charset="utf-8">
+<meta name="color-scheme" content="light dark">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<!-- No analytics.js here, so the daily canary doesn't count as a visit -->
+<title>Live Earth health check</title>
+<style>body { font-family: system-ui, sans-serif; margin: 2rem; } li { margin: 0.25rem 0; }</style>
+<script src="https://andrewmacheret.com/healthcheck.js"></script>
+</head>
+<body>
+<h1>Live Earth health check</h1>
+<script>
+// The LiveEarth Lambda rewrites the data files every night at 02:30 UTC
+const day = (daysAgo) => new Date(Date.now() - daysAgo * 86400000).toISOString().slice(0, 10);
+healthcheck([
+  { name: 'Page', url: '../', assets: true, contains: 'Live Earth</title>' },
+  { name: 'Satellites (CelesTrak)', url: '../data/satellites.json', maxAgeHours: 30 },
+  { name: 'Asteroids and comets (JPL)', url: '../data/small-bodies.json', maxAgeHours: 30 },
+  { name: 'Spacecraft (JPL Horizons)', url: '../data/spacecraft.json', maxAgeHours: 30 },
+  { name: 'Moons (JPL Horizons)', url: '../data/moons.json', maxAgeHours: 30 },
+  { name: 'Clouds (NASA GIBS)', image: true,
+    url: 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?SERVICE=WMS&REQUEST=GetMap&VERSION=1.3.0&LAYERS=VIIRS_NOAA20_CorrectedReflectance_TrueColor&CRS=EPSG:4326&BBOX=-90,-180,90,180&WIDTH=256&HEIGHT=128&FORMAT=image/jpeg&TIME=' + day(2) },
+  { name: 'Wikipedia summaries', url: 'https://en.wikipedia.org/api/rest_v1/page/summary/International_Space_Station', contains: 'International Space Station' }
+]);
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # live-earth
 
-[![Build and deploy](https://github.com/andrewmacheret/live-earth/actions/workflows/deploy.yml/badge.svg)](https://github.com/andrewmacheret/live-earth/actions/workflows/deploy.yml) [![License](https://img.shields.io/badge/license-MIT-lightgray.svg)](https://github.com/andrewmacheret/live-earth/blob/main/LICENSE.md)
+[![Build and deploy](https://github.com/andrewmacheret/live-earth/actions/workflows/deploy.yml/badge.svg)](https://github.com/andrewmacheret/live-earth/actions/workflows/deploy.yml) [![Canary](https://github.com/andrewmacheret/live-earth/actions/workflows/canary.yml/badge.svg)](https://github.com/andrewmacheret/live-earth/actions/workflows/canary.yml) [![License](https://img.shields.io/badge/license-MIT-lightgray.svg)](https://github.com/andrewmacheret/live-earth/blob/main/LICENSE.md)
 
 A 3D globe showing every active satellite where it is right now, using [React](https://react.dev/), [three.js](https://threejs.org/) and [satellite.js](https://github.com/shashwatak/satellite-js).
 
@@ -53,6 +53,10 @@ npm test
 # production build in dist/
 npm run build
 ```
+
+## Health check
+
+[`/projects/live-earth/healthcheck/`](https://andrewmacheret.com/projects/live-earth/healthcheck/) checks the page and its scripts and styles, that the Lambda rewrote the satellite, asteroid, spacecraft and moon data in the last 30 hours, and that NASA GIBS (clouds) and Wikipedia's summary API answer. The Canary workflow (`.github/workflows/canary.yml`) opens it once a day, started by [andrewmacheret/canary](https://github.com/andrewmacheret/canary).
 
 ## Deploy
 
