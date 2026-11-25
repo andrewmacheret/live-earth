@@ -94,7 +94,8 @@ test('downloads each spacecraft, asks for less when the data stops sooner, and s
 
   const crafts = fromCompactSpacecraft(JSON.parse(JSON.stringify(data)));
   const jd = julianDay(NOW);
-  for (const craft of crafts) {
+  // the fake answer is a circle around the Sun, which only makes sense for craft saved around the Sun or Earth
+  for (const craft of crafts.filter(craft => !craft.ellipse || craft.center === 'sun')) {
     const p = craftPosition(craft, jd);
     const [x, y, z] = circle(jd);
     assert.ok(Math.hypot(p[0] - x, p[1] - y, p[2] - z) * KM_PER_AU < (craft.toleranceKm ?? 500) + 100, craft.name);
@@ -137,6 +138,19 @@ test("Parker's ellipse goes all the way around, even before the day it was saved
   assert.ok(Math.hypot(back[0] - q, back[1], back[2]) < 1e-6);
   const path = craftPath(craft, epoch);
   assert.ok(Math.abs(path[0] - q) < 1e-9 && Math.abs(path.at(-3) - q) < 1e-9);
+});
+
+test("a craft circling Mars goes around at Mars's pace, not the Sun's", () => {
+  // nearly a circle 3,700 km from Mars's center, like MRO's, which takes about 114 minutes
+  const r = 3700 / KM_PER_AU;
+  const v = Math.sqrt((0.01720209895 ** 2 * 3.22715e-7) / r) * 1.001;
+  const epoch = 2461368.5;
+  const craft = fromCompactSpacecraft({ spacecraft: [{ id: 'mro', center: 'mars', epoch, state: [r, 0, 0, 0, v, 0] }] })[0];
+  const minutes = ((2 * Math.PI) / craft.ellipse.n) * 1440;
+  assert.ok(Math.abs(minutes - 114) < 1, `period ${minutes}`);
+  assert.ok(craftPosition(craft, epoch + minutes / 2 / 1440)[0] < -r * 0.99);
+  const back = craftPosition(craft, epoch + minutes / 1440);
+  assert.ok(Math.hypot(back[0] - r, back[1], back[2]) < 1e-9);
 });
 
 test("Kepler's equation is solved for negative angles on stretched orbits too", () => {

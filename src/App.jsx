@@ -1106,7 +1106,7 @@ function CraftPanel({ info, summary, onGo, onClose }) {
           <dt>Speed</dt>
           <dd>
             {info.speedKmS.toFixed(info.speedKmS < 10 ? 2 : 1)} km/s{' '}
-            <span className="muted">(compared to the {info.speedFrom})</span>
+            <span className="muted">(compared to {info.speedFrom})</span>
           </dd>
           <dt>Light time</dt>
           <dd>{formatLightTime(info.lightSeconds)} to reach Earth</dd>

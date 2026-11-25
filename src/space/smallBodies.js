@@ -283,8 +283,9 @@ export function ellipsePath(orbit, E, out, points) {
 
 // The ellipse a body is on right now, from where it is and how fast it's going
 // (AU and AU per day from the Sun). E is where it is on that ellipse.
-export function orbitFromState({ x, y, z, vx, vy, vz }) {
-  const mu = GAUSS_K * GAUSS_K;
+// massRatio is for orbits around something else, like a planet, as its mass over the Sun's.
+export function orbitFromState({ x, y, z, vx, vy, vz }, massRatio = 1) {
+  const mu = GAUSS_K * GAUSS_K * massRatio;
   const r = Math.hypot(x, y, z);
   const a = 1 / (2 / r - (vx * vx + vy * vy + vz * vz) / mu);
   const h = [y * vz - z * vy, z * vx - x * vz, x * vy - y * vx];
@@ -299,7 +300,7 @@ export function orbitFromState({ x, y, z, vx, vy, vz }) {
   const P = ev.map(c => c / e);
   const Q = [h[1] * P[2] - h[2] * P[1], h[2] * P[0] - h[0] * P[2], h[0] * P[1] - h[1] * P[0]].map(c => c / hLength);
   const E = Math.atan2((x * vx + y * vy + z * vz) / (e * Math.sqrt(mu * a)), (1 - r / a) / e);
-  return { e, a, b: a * Math.sqrt(1 - e * e), n: meanMotion(a), P, Q, E };
+  return { e, a, b: a * Math.sqrt(1 - e * e), n: meanMotion(a) * Math.sqrt(massRatio), P, Q, E };
 }
 
 // Rough width in km from how bright it is, assuming it reflects 14% of sunlight like a typical asteroid

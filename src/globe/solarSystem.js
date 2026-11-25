@@ -11,7 +11,7 @@ import {
   positionAt,
   sizeFromH
 } from '../space/smallBodies.js';
-import { moonOffset, moonPath, moonPeriod } from '../space/moons.js';
+import { CHARON_PULL, moonOffset, moonPath, moonPeriod } from '../space/moons.js';
 import { CRAFT_COLOR, craftPath, craftPosition, craftSpeed } from '../space/spacecraft.js';
 import { behindEarth, EARTH_RADIUS_KM } from '../sats/frames.js';
 import { createRocks } from './rocks.js';
@@ -221,6 +221,16 @@ function orient(mesh, id, date, frame) {
   mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(x, y, z));
 }
 
+// true if a moon measured in J2000 goes around the opposite way its planet spins
+function againstSpin(moon, date) {
+  const { north } = spinAxis(moon.planet, date);
+  const i = THREE.MathUtils.degToRad(moon.i);
+  const node = THREE.MathUtils.degToRad(moon.node);
+  // the orbit's own north, straight up from the plane it goes around in
+  const up = [Math.sin(i) * Math.sin(node), -Math.sin(i) * Math.cos(node), Math.cos(i)];
+  return up[0] * north.x + up[1] * north.y + up[2] * north.z < 0;
+}
+
 export function createSolarSystem(container, { onPick }) {
   const group = new THREE.Group();
   const loader = new THREE.TextureLoader();
@@ -299,10 +309,10 @@ export function createSolarSystem(container, { onPick }) {
   let craftOpacity = 0;
   let selectedCraft = null;
   const craftItem = id => (id?.startsWith('craft:') ? craftById.get(id.slice(6)) : undefined);
-  // Webb's path is saved from the Earth, so its line goes in a group turned like the scene but not moved
-  const geoFrame = new THREE.Group();
-  geoFrame.matrixAutoUpdate = false;
-  group.add(geoFrame);
+  // the selected craft's line, drawn in AU around its center, like the Sun or Mars
+  const craftFrame = new THREE.Group();
+  craftFrame.matrixAutoUpdate = false;
+  group.add(craftFrame);
   const craftLine = new THREE.Line(
     new THREE.BufferGeometry(),
     new THREE.LineBasicMaterial({
@@ -315,6 +325,7 @@ export function createSolarSystem(container, { onPick }) {
   );
   craftLine.frustumCulled = false;
   craftLine.visible = false;
+  craftFrame.add(craftLine);
   let craftLineTime = null;
 
   // the selected spacecraft's path. Parker's is an ellipse that starts where it is, like the planets'.
@@ -332,7 +343,6 @@ export function createSolarSystem(container, { onPick }) {
         new THREE.BufferAttribute(new Float32Array(path), 3)
       );
     }
-    (item.craft.center === 'earth' ? geoFrame : orbits).add(craftLine);
   }
 
   // Each planet's line is the ellipse it's on right now, starting right at the planet, so the
@@ -458,7 +468,9 @@ export function createSolarSystem(container, { onPick }) {
     // Webb stays near the Earth, so closer in for it.
     viewDistanceOf(id) {
       const craft = craftItem(id)?.craft;
-      if (craft) return craft.center === 'earth' ? 0.004 * AU : 0.08 * AU;
+      // a craft circling a planet stops far enough out to see its whole orbit
+      if (craft?.ellipse && craft.center !== 'sun') return craft.ellipse.a * (1 + craft.ellipse.e) * 3 * AU;
+      if (craft) return { sun: 0.08, earth: 0.004, jupiter: 0.03 }[craft.center] * AU;
       return rockIndex(id) >= 0 ? 0.08 * AU : byId[id].radius * 4;
     },
 
@@ -490,7 +502,7 @@ export function createSolarSystem(container, { onPick }) {
           kind: `Moon of ${planet.name}`,
           radiusKm: moon.radiusKm,
           color: moon.color,
-          dot: 3,
+          dot: moon.radiusKm < 50 ? 2 : 3,
           moon
         };
         const item = makeItem(body);
@@ -505,6 +517,10 @@ export function createSolarSystem(container, { onPick }) {
         const system = new THREE.Group();
         system.matrixAutoUpdate = false;
         group.add(system);
+        // Pluto's small moons go around the balance point with Charon, in J2000 coordinates
+        const bary = new THREE.Group();
+        bary.matrixAutoUpdate = false;
+        group.add(bary);
         const lines = moons.map(item => {
           const line = new THREE.Line(
             new THREE.BufferGeometry().setAttribute(
@@ -521,10 +537,10 @@ export function createSolarSystem(container, { onPick }) {
           );
           line.frustumCulled = false;
           line.visible = false;
-          system.add(line);
+          (item.body.moon.barycenter ? bary : system).add(line);
           return { item, line };
         });
-        return { planet, group: system, moons, lines };
+        return { planet, group: system, bary, moons, lines };
       });
     },
 
@@ -546,7 +562,7 @@ export function createSolarSystem(container, { onPick }) {
         fromEarthKm,
         fromPlanetKm: item.holder.position.distanceTo(byId[moon.planet].holder.position) * EARTH_RADIUS_KM,
         periodDays: moonPeriod(moon),
-        retrograde: moon.i > 90,
+        retrograde: moon.barycenter ? againstSpin(moon, new Date()) : moon.i > 90,
         lightSeconds: fromEarthKm / 299792.458
       };
     },
@@ -583,17 +599,17 @@ export function createSolarSystem(container, { onPick }) {
       const p = craftPosition(craft, jd);
       const base = { name: craft.name, craft };
       if (!p) return { ...base, noData: true };
-      const sun = (positions ?? geocentric(date)).sun;
+      const { sun, [craft.center]: center } = positions ?? geocentric(date);
       // from the Earth, and from the Sun, in AU
-      const geo = craft.center === 'earth' ? p : [p[0] + sun.x, p[1] + sun.y, p[2] + sun.z];
-      const helio = craft.center === 'earth' ? [p[0] - sun.x, p[1] - sun.y, p[2] - sun.z] : p;
+      const geo = [p[0] + center.x, p[1] + center.y, p[2] + center.z];
+      const helio = [geo[0] - sun.x, geo[1] - sun.y, geo[2] - sun.z];
       const fromEarthKm = Math.hypot(...geo) * KM_PER_AU;
       return {
         ...base,
         fromEarthKm,
         fromSunKm: Math.hypot(...helio) * KM_PER_AU,
         speedKmS: (craftSpeed(craft, jd) * KM_PER_AU) / 86400,
-        speedFrom: craft.center === 'earth' ? 'Earth' : 'Sun',
+        speedFrom: `${['sun', 'earth', 'moon'].includes(craft.center) ? 'the ' : ''}${BODIES.find(body => body.id === craft.center).name}`,
         lightSeconds: fromEarthKm / 299792.458,
         guessed: !craft.ellipse && (jd < craft.start || jd > craft.end)
       };
@@ -700,8 +716,9 @@ export function createSolarSystem(container, { onPick }) {
       const z = new THREE.Vector3(...frame(0, 0, 1, [0, 0, 0], 0, 1));
       orbits.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU)).setPosition(byId.sun.holder.position);
       orbits.matrixWorldNeedsUpdate = true;
-      geoFrame.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU));
-      geoFrame.matrixWorldNeedsUpdate = true;
+      craftFrame.matrix.makeBasis(x, y, z).scale(new THREE.Vector3(AU, AU, AU));
+      if (selectedCraft) craftFrame.matrix.setPosition(byId[selectedCraft.craft.center].holder.position);
+      craftFrame.matrixWorldNeedsUpdate = true;
       if (now !== orbitsTime) drawOrbits(now);
       lagrangePoints(date).forEach((p, i) => lagrange[i].position.set(...frame(p.x, p.y, p.z, v)));
       jd = julianDay(now);
@@ -717,16 +734,26 @@ export function createSolarSystem(container, { onPick }) {
           .scale(new THREE.Vector3(1 / EARTH_RADIUS_KM, 1 / EARTH_RADIUS_KM, 1 / EARTH_RADIUS_KM))
           .setPosition(byId[system.planet].holder.position);
         system.group.matrixWorldNeedsUpdate = true;
+        const kmScale = new THREE.Vector3(1 / EARTH_RADIUS_KM, 1 / EARTH_RADIUS_KM, 1 / EARTH_RADIUS_KM);
+        system.bary.matrix.makeBasis(x, y, z).scale(kmScale);
+        system.bary.matrixWorldNeedsUpdate = true;
         for (const item of system.moons) {
-          item.holder.position.fromArray(moonOffset(item.body.moon, jd, v)).applyMatrix4(system.group.matrix);
+          const { moon } = item.body;
+          if (moon.barycenter) {
+            const planet = byId[system.planet].holder.position;
+            const charon = byId['moon:charon']?.holder.position ?? planet;
+            system.bary.matrix.setPosition(point.lerpVectors(planet, charon, CHARON_PULL));
+            item.holder.position.fromArray(moonOffset(moon, jd, v)).applyMatrix4(system.bary.matrix);
+          } else {
+            item.holder.position.fromArray(moonOffset(moon, jd, v)).applyMatrix4(system.group.matrix);
+          }
         }
       }
       if (rocks && (rocks.group.visible || rocks.selected >= 0)) rocks.update(jd);
       for (const item of crafts) {
         item.at = !!craftPosition(item.craft, jd, v);
         if (!item.at) continue;
-        item.holder.position.set(...frame(v[0], v[1], v[2], v));
-        if (item.craft.center !== 'earth') item.holder.position.add(byId.sun.holder.position);
+        item.holder.position.set(...frame(v[0], v[1], v[2], v)).add(byId[item.craft.center].holder.position);
       }
       // Parker's line starts where it is, so it moves with it. The other paths stay put.
       if (selectedCraft && (craftLineTime == null || (selectedCraft.craft.ellipse && jd !== craftLineTime))) {
@@ -798,8 +825,17 @@ export function createSolarSystem(container, { onPick }) {
       // spacecraft show up a little sooner than rocks, so Webb appears once you're past the Moon
       craftOpacity = craftsShown ? THREE.MathUtils.smoothstep(earthDistance, 60, 300) : 0;
       for (const item of crafts) {
+        const { center } = item.craft;
+        // craft around the Moon or a planet don't crowd the satellites, so they skip that fade
+        let opacity = center === 'sun' || center === 'earth' ? craftOpacity : craftsShown ? 1 : 0;
+        // and like moons, they fade out once they'd sit right on their center's dot
+        if (center !== 'sun') {
+          const centerPosition = byId[center].holder.position;
+          const apartPx = (item.holder.position.distanceTo(centerPosition) / camera.position.distanceTo(item.holder.position)) * focal;
+          opacity *= THREE.MathUtils.smoothstep(apartPx, 3, 8);
+        }
         // a picked spacecraft stays visible, even when the rest are hidden
-        item.opacity = item === selectedCraft ? Math.max(craftOpacity, 0.8) : craftOpacity;
+        item.opacity = item === selectedCraft ? Math.max(opacity, 0.8) : opacity;
         item.holder.visible = item.at && item.opacity > 0;
         item.glow.material.uniforms.uSize.value = 6 * pixelRatio;
         item.glow.material.uniforms.uOpacity.value = item.opacity;

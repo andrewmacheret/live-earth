@@ -11,8 +11,9 @@ const TDB_AHEAD_DAYS = 69.184 / 86400;
 
 // step is how many days apart to ask Horizons for positions (a quarter day if missing).
 // coast: leaving the solar system in a nearly straight line, so it keeps going past the saved year.
-// orbit: swings past the Sun too fast for daily positions, so it's saved as one ellipse instead.
-// center 'earth': stays near the Earth, so it's saved from the Earth instead of the Sun.
+// orbit: goes around too fast for daily positions, so it's saved as one ellipse instead.
+// center: what it's saved around, if not the Sun, like 'earth' for Webb or 'mars' for the Mars orbiters.
+// The ellipses of craft circling a planet drift off over the months, but they stay on a real-looking orbit.
 // toleranceKm: how far off a skipped position may be, when it loops around a planet too fast to keep every loop.
 export const SPACECRAFT = [
   {
@@ -175,10 +176,143 @@ export const SPACECRAFT = [
     agency: 'ESA',
     launched: 2024,
     note: "Checking on the asteroid Dimorphos, which NASA's DART spacecraft crashed into in 2022."
+  },
+  {
+    id: 'hayabusa2',
+    horizons: -37,
+    name: 'Hayabusa2',
+    article: 'Hayabusa2',
+    agency: 'JAXA',
+    launched: 2014,
+    note: 'Brought back pieces of the asteroid Ryugu in 2020. Now headed to the tiny asteroid 1998 KY26, arriving in 2031.'
+  },
+  {
+    id: 'juno',
+    horizons: -61,
+    name: 'Juno',
+    article: 'Juno (spacecraft)',
+    agency: 'NASA',
+    launched: 2011,
+    center: 'jupiter',
+    toleranceKm: 20000,
+    link: 'https://science.nasa.gov/mission/juno/',
+    note: 'Circling Jupiter since 2016, diving close over its poles every month or so.'
+  },
+  {
+    id: 'mro',
+    horizons: -74,
+    name: 'Mars Reconnaissance Orbiter',
+    short: 'MRO',
+    article: 'Mars Reconnaissance Orbiter',
+    agency: 'NASA',
+    launched: 2005,
+    center: 'mars',
+    orbit: true,
+    link: 'https://science.nasa.gov/mission/mars-reconnaissance-orbiter/',
+    note: 'Photographs Mars in fine detail and relays messages from the rovers. Goes around every 2 hours.'
+  },
+  {
+    id: 'odyssey',
+    horizons: -53,
+    name: '2001 Mars Odyssey',
+    short: 'Odyssey',
+    article: '2001 Mars Odyssey',
+    agency: 'NASA',
+    launched: 2001,
+    center: 'mars',
+    orbit: true,
+    link: 'https://science.nasa.gov/mission/mars-odyssey/',
+    note: 'The longest-working spacecraft at another planet, circling Mars since 2001.'
+  },
+  {
+    id: 'mars-express',
+    horizons: -41,
+    name: 'Mars Express',
+    article: 'Mars Express',
+    agency: 'ESA',
+    launched: 2003,
+    center: 'mars',
+    orbit: true,
+    note: "Europe's first mission to another planet, circling Mars since 2003."
+  },
+  {
+    id: 'tgo',
+    horizons: -143,
+    name: 'ExoMars Trace Gas Orbiter',
+    short: 'TGO',
+    article: 'Trace Gas Orbiter',
+    agency: 'ESA and Roscosmos',
+    launched: 2016,
+    center: 'mars',
+    orbit: true,
+    note: "Sniffs Mars's air for methane and other gases."
+  },
+  {
+    id: 'lro',
+    horizons: -85,
+    name: 'Lunar Reconnaissance Orbiter',
+    short: 'LRO',
+    article: 'Lunar Reconnaissance Orbiter',
+    agency: 'NASA',
+    launched: 2009,
+    center: 'moon',
+    orbit: true,
+    link: 'https://science.nasa.gov/mission/lro/',
+    note: 'Maps the Moon from a low orbit, about 2 hours around.'
+  },
+  {
+    id: 'soho',
+    horizons: -21,
+    name: 'SOHO',
+    article: 'Solar and Heliospheric Observatory',
+    agency: 'ESA and NASA',
+    launched: 1995,
+    step: 1,
+    center: 'earth',
+    link: 'https://science.nasa.gov/mission/soho/',
+    note: 'Has watched the Sun nonstop from near L1 since 1996, and found over 5,000 comets on the way.'
+  },
+  {
+    id: 'dscovr',
+    horizons: -78,
+    name: 'DSCOVR',
+    article: 'Deep Space Climate Observatory',
+    agency: 'NOAA and NASA',
+    launched: 2015,
+    step: 1,
+    center: 'earth',
+    note: "Near L1, watching the solar wind and taking pictures of Earth's sunlit side."
+  },
+  {
+    id: 'ace',
+    horizons: -92,
+    name: 'Advanced Composition Explorer',
+    short: 'ACE',
+    article: 'Advanced Composition Explorer',
+    agency: 'NASA',
+    launched: 1997,
+    step: 1,
+    center: 'earth',
+    note: 'Near L1, giving about an hour of warning before solar storms reach Earth.'
+  },
+  {
+    id: 'euclid',
+    horizons: -680,
+    name: 'Euclid',
+    article: 'Euclid (spacecraft)',
+    agency: 'ESA',
+    launched: 2023,
+    step: 1,
+    center: 'earth',
+    note: 'A space telescope near L2, mapping dark matter and dark energy across a third of the sky.'
   }
 ];
 export const CRAFT_BY_ID = Object.fromEntries(SPACECRAFT.map(craft => [craft.id, craft]));
 export const CRAFT_COLOR = '#7dffb2';
+
+// Horizons' code for each center, and its mass compared to the Sun's for the ellipses
+const CENTERS = { sun: 10, earth: 399, moon: 301, mars: 499, jupiter: 599 };
+const MASS_RATIO = { sun: 1, earth: 3.00349e-6, moon: 3.69432e-8, mars: 3.22715e-7, jupiter: 9.54594e-4 };
 
 const MONTHS = { JAN: 0, FEB: 1, MAR: 2, APR: 3, MAY: 4, JUN: 5, JUL: 6, AUG: 7, SEP: 8, OCT: 9, NOV: 10, DEC: 11 };
 const time = ms => new Date(ms).toISOString().slice(0, 16).replace('T', ' ');
@@ -188,7 +322,7 @@ function horizonsUrl(craft, start, stop, step) {
     format: 'json',
     COMMAND: `'${craft.horizons}'`,
     EPHEM_TYPE: 'VECTORS',
-    CENTER: craft.center === 'earth' ? "'500@399'" : "'500@10'",
+    CENTER: `'500@${CENTERS[craft.center ?? 'sun']}'`,
     START_TIME: `'${time(start)}'`,
     STOP_TIME: `'${time(stop)}'`,
     STEP_SIZE: `'${Math.round(step * 1440)} m'`,
@@ -330,7 +464,8 @@ export async function downloadSpacecraft({ fetchImpl = fetch, now = Date.now(), 
       const entry = { id: craft.id, center: craft.center ?? 'sun' };
       if (craft.orbit) {
         entry.epoch = rows[0][0];
-        entry.state = compact(rows[0]);
+        // more places, since a tiny speed error adds up fast for a craft that circles a planet every 2 hours
+        entry.state = rows[0].slice(1).map(value => round(value, 13));
       } else {
         const kept = thinRows(craft.coast ? rows : await refine(craft, rows, fetchImpl), craft.toleranceKm);
         entry.start = kept[0][0];
@@ -353,7 +488,7 @@ export function fromCompactSpacecraft(data) {
       const craft = { ...CRAFT_BY_ID[entry.id], ...entry };
       if (entry.state) {
         const [x, y, z, vx, vy, vz] = entry.state;
-        const orbit = orbitFromState({ x, y, z, vx, vy, vz });
+        const orbit = orbitFromState({ x, y, z, vx, vy, vz }, MASS_RATIO[entry.center ?? 'sun']);
         craft.ellipse = { ...orbit, M0: orbit.E - orbit.e * Math.sin(orbit.E), epoch: entry.epoch };
       } else {
         craft.times = entry.days.map(d => entry.start + d);
@@ -363,7 +498,7 @@ export function fromCompactSpacecraft(data) {
     });
 }
 
-// Where it is on this Julian day, in AU from the Sun (or the Earth, for center 'earth'), written into out.
+// Where it is on this Julian day, in AU from its center (usually the Sun), written into out.
 // Returns null when there's no data for that day.
 export function craftPosition(craft, jd, out = [0, 0, 0]) {
   if (craft.ellipse) return pointAt(craft.ellipse, eccentricAnomaly(craft.ellipse, jd), out);
