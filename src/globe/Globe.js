@@ -116,8 +116,8 @@ export class Globe {
     this.controls.enableDamping = true;
     this.controls.enablePan = false;
     this.controls.minDistance = 1.08;
-    // far enough to see the whole heliosphere, the bubble the Sun's wind blows
-    this.controls.maxDistance = 1.5e7;
+    // about 4,000 AU, far enough to see all of Sedna's orbit
+    this.controls.maxDistance = 1e8;
 
     this.globe = createEarth();
     // NOAA's live aurora, checked every 10 minutes while the page is showing
