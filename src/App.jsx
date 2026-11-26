@@ -3,7 +3,6 @@ import { Globe } from './globe/Globe.js';
 import { articleFor, fetchSummary, trackerLinks } from './sats/about.js';
 import { CATEGORIES, categoryFor, fromCompact } from './sats/catalog.js';
 import { loadFavorites, saveFavorites, toggleFavorite } from './favorites.js';
-import { fromCompactPlanes } from './planes/compact.js';
 import { BODIES, BODY_BY_ID, bodyLink, DWARF_PDES } from './space/bodies.js';
 import { fromCompactBodies, KIND_BY_ID, KINDS, NOTABLE } from './space/smallBodies.js';
 import { fromCompactMoons } from './space/moons.js';
@@ -18,8 +17,6 @@ const ISS = 25544;
 const CATEGORY_BY_ID = Object.fromEntries(CATEGORIES.map(c => [c.id, c]));
 const number = new Intl.NumberFormat();
 const DAY_MS = 86400000;
-// checking costs almost nothing when the file hasn't changed, since the browser asks "has it changed?"
-const PLANES_CHECK_MS = 60000;
 
 export default function App() {
   const containerRef = useRef(null);
@@ -34,7 +31,6 @@ export default function App() {
   const [focus, setFocus] = useState(null);
   const [favorites, setFavorites] = useState(loadFavorites);
   useEffect(() => saveFavorites(favorites), [favorites]);
-  const [planes, setPlanes] = useState(null);
   // NOAA's aurora forecast, like { peak: 19, observed: Date }
   const [aurora, setAurora] = useState(null);
   // the day of NASA's cloud picture, like '2026-11-23'
@@ -174,8 +170,7 @@ export default function App() {
             return;
           }
           if (start < 0 && /^(rock|craft|moon):/.test(params.get('body'))) return loadSpaceRef.current();
-          // a link to a plane opens on that plane once the planes load
-          if (start < 0 && !params.get('plane')) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
+          if (start < 0) start = records.findIndex(r => r.NORAD_CAT_ID === ISS);
           if (start >= 0) {
             globe.select(start);
             globe.faceSelected(false);
@@ -201,53 +196,13 @@ export default function App() {
     };
   }, []);
 
-  // planes load after the satellites, so the globe shows up first. A missing file means no planes.
-  useEffect(() => {
-    if (!catalog) return;
-    let stopped = false;
-    let timer;
-    let lastGenerated = null;
-    let first = true;
-    const load = async () => {
-      try {
-        if (!document.hidden) {
-          const response = await fetch('data/planes.json', { cache: 'no-cache' });
-          // no planes file at all, so stop asking
-          if (response.status === 404) return;
-          const data = response.ok ? await response.json() : null;
-          if (data && data.generated !== lastGenerated && !stopped) {
-            lastGenerated = data.generated;
-            const list = fromCompactPlanes(data);
-            globeRef.current.setPlanes(list, data.time * 1000);
-            setPlanes({ list, generated: data.generated });
-            const wanted = first && new URLSearchParams(location.search).get('plane');
-            if (wanted && list.some(plane => plane.icao === wanted)) {
-              globeRef.current.selectPlane(wanted);
-              globeRef.current.facePlane();
-            }
-            first = false;
-          }
-        }
-      } catch {
-        // try again next time
-      }
-      if (!stopped) timer = setTimeout(load, PLANES_CHECK_MS);
-    };
-    load();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
-  }, [catalog]);
-
-  const isPlane = info?.type === 'plane';
   const isRock = info?.type === 'rock';
   const isCraft = info?.type === 'craft';
   const isMoon = info?.type === 'moon';
   const isShower = info?.type === 'shower';
   const bodyId = info?.type === 'body' || isRock || isCraft || isMoon || isShower ? info.id : null;
   const isSat = !!info && !info.type;
-  const selectionKey = info ? (isPlane ? `plane ${info.icao}` : bodyId ? `body ${bodyId}` : `sat ${info.noradId}`) : null;
+  const selectionKey = info ? (bodyId ? `body ${bodyId}` : `sat ${info.noradId}`) : null;
   // open the full panel again whenever something new is picked
   useEffect(() => {
     setCollapsed(false);
@@ -261,8 +216,7 @@ export default function App() {
     else deselect();
   };
   const deselect = () => {
-    if (isPlane) globeRef.current.selectPlane(null);
-    else if (bodyId) globeRef.current.selectBody(null);
+    if (bodyId) globeRef.current.selectBody(null);
     else globeRef.current.select(-1);
   };
   // tapping empty space on a phone shrinks the panel first, then deselects on the next tap
@@ -310,12 +264,6 @@ export default function App() {
     globeRef.current.goTo(id);
   };
 
-  const pickPlane = icao => {
-    if (hidden.has('planes')) toggleCategory('planes');
-    globeRef.current.selectPlane(icao);
-    globeRef.current.facePlane();
-  };
-
   const randomItem = list => list[Math.floor(Math.random() * list.length)];
   const surprise = () => {
     const groups = Object.values(catalog.withArticles);
@@ -327,15 +275,11 @@ export default function App() {
 
   // put the selected satellite in the address bar so links open on it (the ISS is the default)
   const selectedId = info?.noradId;
-  const selectedPlane = info?.icao;
   useEffect(() => {
     if (!catalog) return;
     const url = new URL(location.href);
     if (selectedId && selectedId !== ISS) url.searchParams.set('sat', selectedId);
     else url.searchParams.delete('sat');
-    if (selectedPlane) url.searchParams.set('plane', selectedPlane);
-    // keep a plane from the link until the planes have loaded
-    else if (planes) url.searchParams.delete('plane');
     if (bodyId) url.searchParams.set('body', bodyId);
     // keep a rock or spacecraft from the link until they've loaded
     else {
@@ -349,7 +293,7 @@ export default function App() {
     // a shared link's time and camera only matter when it opens
     for (const key of VIEW_KEYS) url.searchParams.delete(key);
     if (url.href !== location.href) history.replaceState(null, '', url);
-  }, [selectedId, selectedPlane, bodyId, catalog, planes, rocks, crafts, moons]);
+  }, [selectedId, bodyId, catalog, rocks, crafts, moons]);
 
   const [linkCopied, setLinkCopied] = useState(false);
   // copy a link to this moment and this view
@@ -443,7 +387,7 @@ export default function App() {
   const tabIds =
     legendTab === 'space'
       ? ['moons', 'craft', 'showers', 'constellations', ...KINDS.map(kind => `rock:${kind.id}`)]
-      : [...CATEGORIES.map(c => c.id), 'planes', 'clouds', 'aurora'];
+      : [...CATEGORIES.map(c => c.id), 'clouds', 'aurora'];
   const tabHidden = tabIds.some(id => hidden.has(id));
   const toggleAll = () => {
     const next = new Set(hidden);
@@ -488,7 +432,6 @@ export default function App() {
     });
 
   const live = speed === 1 && Math.abs(simTime - Date.now()) < 3000;
-  const planesNearLive = Math.abs(simTime - Date.now()) < 5 * 60000;
   // the aurora fades out 3 to 6 hours away from NOAA's forecast (see Globe.js)
   const auroraNearLive = aurora && Math.abs(simTime - aurora.observed.getTime()) < 3 * 3600000;
 
@@ -506,9 +449,7 @@ export default function App() {
         </div>
         <p className="subtitle">
           {catalog
-            ? `${number.format(catalog.records.length)} satellites${
-                planes ? ` and ${number.format(planes.list.length)} planes` : ''
-              }, where they are right now`
+            ? `${number.format(catalog.records.length)} satellites, where they are right now`
             : error || 'Loading satellites…'}
         </p>
         {catalog && (
@@ -517,12 +458,10 @@ export default function App() {
               records={catalog.records}
               wiki={catalog.wiki}
               favorites={favoriteIndices}
-              planes={planes?.list ?? []}
               rocks={rocks?.records ?? []}
               crafts={crafts?.list ?? []}
               moons={moons?.list ?? []}
               onPick={pickAndFace}
-              onPickPlane={pickPlane}
               onPickBody={pickBody}
               onFocus={() => loadSpaceRef.current?.()}
             />
@@ -646,20 +585,6 @@ export default function App() {
                   <span className="count">{number.format(catalog.counts[c.id])}</span>
                 </button>
               ))}
-              {planes && (
-                <button
-                  className={`planes-row ${hidden.has('planes') ? 'off' : ''}`}
-                  onClick={() => toggleCategory('planes')}
-                  aria-pressed={!hidden.has('planes')}
-                  title={planesNearLive ? undefined : 'Planes only fly in straight lines, so they only show near the live time'}
-                >
-                  <span className="plane-icon" aria-hidden="true">
-                    ✈
-                  </span>
-                  Planes
-                  <span className="count">{planesNearLive ? number.format(planes.list.length) : 'live only'}</span>
-                </button>
-              )}
               {cloudDay && (
                 <button
                   className={hidden.has('clouds') ? 'off' : ''}
@@ -772,8 +697,6 @@ export default function App() {
 
       {showBar && <SelectionBar info={info} onExpand={() => setCollapsed(false)} onClose={deselect} />}
 
-      {isPlane && !panelHidden && <PlanePanel info={info} onClose={closePanel} />}
-
       {isRock && !panelHidden && (
         <RockPanel
           info={info}
@@ -854,7 +777,6 @@ export default function App() {
         open={sourcesOpen}
         onClose={() => setSourcesOpen(false)}
         catalog={catalog}
-        planes={planes}
         aurora={aurora}
         cloudDay={cloudDay}
         rocks={rocks}
@@ -865,7 +787,7 @@ export default function App() {
   );
 }
 
-function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick, onPickPlane, onPickBody, onFocus }) {
+function Search({ records, wiki, favorites, rocks, crafts, moons, onPick, onPickBody, onFocus }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const inputRef = useRef(null);
@@ -909,14 +831,6 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
         out.push({ rank: starts ? 0 : 1, type: 'sat', index: i });
       }
     }
-    // planes only match from the start, since callsigns are short codes like UAL927
-    for (let i = 0, found = 0; i < planes.length && found < 50; i++) {
-      const { callsign, icao } = planes[i];
-      if (callsign.startsWith(q) || icao.toUpperCase() === q) {
-        out.push({ rank: 0, type: 'plane', index: i });
-        found++;
-      }
-    }
     // famous rocks like Ceres or Halley go above satellites, and the rest below
     for (let i = 0, found = 0; i < rocks.length && found < 50; i++) {
       const [name, short] = rockNames[i];
@@ -928,15 +842,14 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
     }
     // names that start with what you typed go first
     return out.sort((a, b) => a.rank - b.rank).slice(0, 8);
-  }, [query, records, wiki, planes, rocks, rockNames, crafts, moons]);
+  }, [query, records, wiki, rocks, rockNames, crafts, moons]);
 
   // with nothing typed, show your favorites instead
   const showingFavorites = !query.trim() && favorites.length > 0;
   const list = showingFavorites ? favorites.map(index => ({ type: 'sat', index })) : matches;
 
   const pick = item => {
-    if (item.type === 'plane') onPickPlane(planes[item.index].icao);
-    else if (item.type === 'body') onPickBody(item.id);
+    if (item.type === 'body') onPickBody(item.id);
     else if (item.type === 'rock') onPickBody(`rock:${rocks[item.index].pdes}`);
     else if (item.type === 'craft') onPickBody(`craft:${crafts[item.index].id}`);
     else if (item.type === 'moon') onPickBody(`moon:${moons[item.index].id}`);
@@ -952,7 +865,7 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
         ref={inputRef}
         type="search"
         value={query}
-        placeholder={planes.length ? 'Search: ISS, Hubble, Mars, UAL…' : 'Search: ISS, Hubble, Mars…'}
+        placeholder="Search: ISS, Hubble, Mars…"
         onChange={event => {
           setQuery(event.target.value);
           setOpen(true);
@@ -967,7 +880,7 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
           if (event.key === 'Enter' && list.length) pick(list[0]);
           if (event.key === 'Escape') inputRef.current.blur();
         }}
-        aria-label={planes.length ? 'Find a satellite, planet or flight' : 'Find a satellite or planet'}
+        aria-label="Find a satellite or planet"
       />
       {open && list.length > 0 && (
         // keep the input focused while clicking, so the list doesn't close first
@@ -1022,19 +935,6 @@ function Search({ records, wiki, favorites, planes, rocks, crafts, moons, onPick
                     {rocks[item.index].name}
                   </span>
                   <span className="count">{KIND_BY_ID[rocks[item.index].kind].short}</span>
-                </button>
-              </li>
-            ) : item.type === 'plane' ? (
-              <li key={`plane ${item.index}`}>
-                <button onClick={() => pick(item)}>
-                  <span>
-                    <span className="plane-icon" aria-hidden="true">
-                      ✈{' '}
-                    </span>
-                    {planes[item.index].callsign || planes[item.index].icao.toUpperCase()}
-                    <span className="also"> {planes[item.index].country}</span>
-                  </span>
-                  <span className="count">{planes[item.index].icao.toUpperCase()}</span>
                 </button>
               </li>
             ) : (
@@ -1434,27 +1334,24 @@ function CraftPanel({ info, summary, onGo, onClose }) {
 
 // the shrunken info panel on phones. The selection and Ride along keep going underneath
 function SelectionBar({ info, onExpand, onClose }) {
-  const isPlane = info.type === 'plane';
   const isRock = info.type === 'rock';
   const isCraft = info.type === 'craft';
   const isMoon = info.type === 'moon';
   const isShower = info.type === 'shower';
   const body = info.type === 'body' ? BODY_BY_ID[info.id] : null;
   const category = info.type ? null : CATEGORY_BY_ID[info.category];
-  const name = isPlane ? info.callsign || info.icao.toUpperCase() : body ? titleName(body) : info.name;
-  const kind = isPlane
-    ? (info.kind ?? 'Plane')
-    : body
-      ? body.kind
-      : isRock
-        ? info.kind.short
-        : isCraft
-          ? 'Spacecraft'
-          : isMoon
-            ? info.kind
-            : isShower
-              ? 'Meteor shower'
-              : category.label;
+  const name = body ? titleName(body) : info.name;
+  const kind = body
+    ? body.kind
+    : isRock
+      ? info.kind.short
+      : isCraft
+        ? 'Spacecraft'
+        : isMoon
+          ? info.kind
+          : isShower
+            ? 'Meteor shower'
+            : category.label;
   return (
     <aside className="panel top-right selection-bar">
       <button className="expand" onClick={onExpand} aria-expanded="false" aria-label={`Show details for ${name}`}>
@@ -1489,73 +1386,6 @@ function useMediaQuery(query) {
     return () => list.removeEventListener('change', update);
   }, [query]);
   return matches;
-}
-
-function PlanePanel({ info, onClose }) {
-  const name = info.callsign || info.icao.toUpperCase();
-  const feetPerMin = Math.round((info.climb * 196.85) / 100) * 100;
-  const links = [
-    info.callsign && { label: 'FlightAware', href: `https://www.flightaware.com/live/flight/${info.callsign}` },
-    { label: 'ADS-B Exchange', href: `https://globe.adsbexchange.com/?icao=${info.icao}` },
-    { label: 'adsb.lol', href: `https://adsb.lol/?icao=${info.icao}` }
-  ].filter(Boolean);
-  return (
-    <aside className="panel top-right info">
-      <button className="close" onClick={onClose} aria-label="Close">
-        ×
-      </button>
-      <div className="kind plane-kind">{info.kind ?? 'Plane'}</div>
-      <h2>{name}</h2>
-      <p className="ids">
-        ICAO {info.icao.toUpperCase()} · registered in {info.country}
-      </p>
-      {info.shown ? (
-        <dl>
-          <dt>Altitude</dt>
-          <dd>
-            {number.format(Math.round((info.altitude * 3.28084) / 100) * 100)} ft{' '}
-            <span className="muted">({(info.altitude / 1000).toFixed(1)} km)</span>
-          </dd>
-          <dt>Speed</dt>
-          <dd>
-            {number.format(Math.round(info.speed * 1.94384))} knots{' '}
-            <span className="muted">({number.format(Math.round(info.speed * 3.6))} km/h)</span>
-          </dd>
-          <dt>Heading</dt>
-          <dd>
-            {Math.round(info.track)}° {compass(info.track)}
-          </dd>
-          <dt>Climb</dt>
-          <dd>
-            {Math.abs(feetPerMin) < 200
-              ? 'Level'
-              : `${feetPerMin > 0 ? 'Climbing' : 'Descending'} ${number.format(Math.abs(feetPerMin))} ft/min`}
-          </dd>
-          <dt>Over</dt>
-          <dd>{formatLatLon(info.lat, info.lon)}</dd>
-          <dt>Last heard</dt>
-          <dd>{ageLabel(new Date(info.at).toISOString())}</dd>
-        </dl>
-      ) : (
-        <p>Planes only fly in straight lines here, so they only show near the live time.</p>
-      )}
-      <section className="about">
-        <p className="about-links">
-          {links.map(link => (
-            <a key={link.label} href={link.href} target="_blank" rel="noreferrer">
-              {link.label}
-            </a>
-          ))}
-        </p>
-      </section>
-    </aside>
-  );
-}
-
-function compass(degrees) {
-  return ['north', 'northeast', 'east', 'southeast', 'south', 'southwest', 'west', 'northwest'][
-    Math.round(degrees / 45) % 8
-  ];
 }
 
 function About({ summary, partOf, links }) {
@@ -1619,7 +1449,7 @@ function offsetLabel(ms) {
 }
 
 // every data source and picture the page uses, with how fresh the data is once it's loaded
-function DataSources({ open, onClose, catalog, planes, aurora, cloudDay, rocks, crafts, moons }) {
+function DataSources({ open, onClose, catalog, aurora, cloudDay, rocks, crafts, moons }) {
   const ref = useRef(null);
   useEffect(() => {
     const dialog = ref.current;
@@ -1633,12 +1463,6 @@ function DataSources({ open, onClose, catalog, planes, aurora, cloudDay, rocks, 
       name: 'CelesTrak',
       href: 'https://celestrak.org/',
       note: catalog && `updated ${ageLabel(catalog.generated)}`
-    },
-    planes && {
-      what: 'Planes',
-      name: 'OpenSky Network',
-      href: 'https://opensky-network.org/',
-      note: `updated ${ageLabel(planes.generated)}`
     },
     {
       what: 'The Sun, Moon and planets, eclipses and Coming up',
@@ -1688,7 +1512,7 @@ function DataSources({ open, onClose, catalog, planes, aurora, cloudDay, rocks, 
       href: 'https://www.solarsystemscope.com/textures/',
       license: { name: 'CC BY 4.0', href: 'https://creativecommons.org/licenses/by/4.0/' }
     }
-  ].filter(Boolean);
+  ];
   return (
     // clicks on the dark backdrop land on the dialog itself, so they close it
     <dialog

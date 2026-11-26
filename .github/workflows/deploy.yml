@@ -47,14 +47,13 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run build
-      # The Lambdas import ../src/sats, ../src/planes and three files from ../src/space, so keep the folder layout.
+      # The Lambda imports ../src/sats and three files from ../src/space, so keep the folder layout.
       # The SDK comes with the runtime.
       - name: Package Lambda
         run: |
-          mkdir -p build/lambda build/src/sats build/src/planes build/src/space
+          mkdir -p build/lambda build/src/sats build/src/space
           cp lambda/*.js build/lambda/
           cp src/sats/*.js build/src/sats/
-          cp src/planes/*.js build/src/planes/
           cp src/space/smallBodies.js src/space/spacecraft.js src/space/moons.js build/src/space/
           echo '{"type":"module"}' > build/package.json
           (cd build && zip -qr ../lambda.zip .)
